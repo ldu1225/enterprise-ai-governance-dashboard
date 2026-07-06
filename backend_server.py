@@ -1329,7 +1329,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                             break
                 except Exception as e_api:
                     print(f"Vertex AI Workbench REST API Call ({loc}) info:", e_api)
-        notebook_count = max(3, notebook_count)
+ 
 
         # 2. Dynamic Date-Filtered Query for REAL USER PROMPTS & UNIQUE ACTIVE USERS from gen_ai_user_message
         where_stmt = build_where_clause(s_dt, e_dt, "timestamp")
