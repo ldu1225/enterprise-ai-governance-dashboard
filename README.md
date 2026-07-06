@@ -176,12 +176,11 @@ export PROJECT_ID="your-gcp-project-id"
 gcloud alpha bq datasets create ge_analytics --project=$PROJECT_ID --location=us-central1
 gcloud alpha bq datasets create modelarmor_security --project=$PROJECT_ID --location=us-central1
 
-# 2. 감사 로그 통합 싱크 생성 (Vertex AI, Gemini Ent, IAM, Secret Manager 전사 감사 로그)
-gcloud logging sinks create lges-audit-sink \
+# 2. GCP 통합 감사 및 보안 로그 싱크 생성 (Vertex AI, Agent Builder, Model Armor, Audit Log 전체)
+gcloud logging sinks create ge_discoveryengine_logs_sink \
   bigquery.googleapis.com/projects/$PROJECT_ID/datasets/ge_analytics \
-  --log-filter='logName:"cloudaudit.googleapis.com"' \
-  --project=$PROJECT_ID \
-  --use-partitioned-tables
+  --log-filter='protoPayload.serviceName="discoveryengine.googleapis.com" OR protoPayload.serviceName="generativelanguage.googleapis.com" OR protoPayload.serviceName="aiplatform.googleapis.com" OR protoPayload.serviceName="modelarmor.googleapis.com" OR resource.type="modelarmor.googleapis.com/SanitizeOperation" OR logName:"modelarmor" OR logName:"discoveryengine" OR logName:"cloudaudit.googleapis.com"' \
+  --project=$PROJECT_ID
 
 # 3. Model Armor 보안 차단 로그 싱크 생성
 gcloud logging sinks create lges-modelarmor-sink \
