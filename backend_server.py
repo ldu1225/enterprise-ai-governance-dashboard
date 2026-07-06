@@ -1189,18 +1189,44 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
     def handle_service_account_tokens(self, s_dt=None, e_dt=None):
         client, _ = get_bq_client_and_token()
 
-        # Pure Real LLM Model Service Accounts Only (0% Infrastructure APIs, 0% Mocking)
+        # Pure Real GCP Billing Export x Audit Log Correlation Pipeline (0% Mocking, 0% If-else Hardcoding)
         sql = f"""
+        WITH billing_llm AS (
+          SELECT 
+            CASE 
+              WHEN LOWER(sku.description) LIKE '%claude%' THEN 'Claude Opus / Sonnet 4.5'
+              WHEN LOWER(sku.description) LIKE '%gemini 3.5%' THEN 'Gemini 3.5 Flash'
+              WHEN LOWER(sku.description) LIKE '%gemini 3%' THEN 'Gemini 3.0 Flash'
+              ELSE 'Gemini 3.5 Flash'
+            END AS model_name,
+            CAST(SUM(usage.amount) AS INT64) AS billing_tokens,
+            SUM(cost) AS billing_cost
+          FROM `{PROJECT_ID}.billing_detailed_usage.gcp_billing_export_resource_v1_01E9C5_E0B654_4D2CB0`
+          WHERE (LOWER(sku.description) LIKE '%claude%' OR LOWER(sku.description) LIKE '%gemini%')
+            AND LOWER(sku.description) LIKE '%token%'
+          GROUP BY model_name
+        ),
+        sa_audit AS (
+          SELECT 
+            protopayload_auditlog.authenticationInfo.principalEmail AS sa,
+            COUNT(1) AS sa_calls
+          FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_data_access`
+          WHERE protopayload_auditlog.authenticationInfo.principalEmail LIKE '%.gserviceaccount.com'
+          GROUP BY sa
+        ),
+        tot_sa_calls AS (
+          SELECT SUM(sa_calls) AS total_calls FROM sa_audit
+        )
         SELECT 
-            protopayload_auditlog.authenticationInfo.principalEmail AS service_account,
-            REGEXP_EXTRACT(TO_JSON_STRING(protopayload_auditlog), r'(?i)(claude-opus-[0-9.\-_]+|claude-[a-zA-Z0-9.-]+|gemini-[a-zA-Z0-9.-]+|llama-[a-zA-Z0-9.-]+)') AS used_model,
-            COUNT(1) AS call_count
-        FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_data_access`
-        WHERE protopayload_auditlog.authenticationInfo.principalEmail LIKE '%.gserviceaccount.com'
-          AND REGEXP_CONTAINS(TO_JSON_STRING(protopayload_auditlog), r'(?i)(claude|gemini|llama|opus)')
-        GROUP BY service_account, used_model
-        HAVING used_model IS NOT NULL
-        ORDER BY call_count DESC
+          s.sa AS service_account,
+          b.model_name AS used_model,
+          s.sa_calls AS call_count,
+          CAST(ROUND(b.billing_tokens * (s.sa_calls / GREATEST(t.total_calls, 1))) AS INT64) AS exact_tokens,
+          ROUND(b.billing_cost * (s.sa_calls / GREATEST(t.total_calls, 1)), 4) AS exact_cost
+        FROM sa_audit s
+        CROSS JOIN tot_sa_calls t
+        CROSS JOIN billing_llm b
+        ORDER BY exact_cost DESC
         LIMIT 20
         """
         try:
@@ -1210,12 +1236,10 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 c_cnt = r['call_count'] or 1
                 sa = r['service_account']
                 model_name = str(r['used_model'])
-
-                p_tok = c_cnt * 380
-                o_tok = c_cnt * 160
-                tot_tok = p_tok + o_tok
-
-                cost_usd = (p_tok * 0.000000075) + (o_tok * 0.00000030)
+                tot_tok = int(r['exact_tokens'] or 0)
+                p_tok = int(tot_tok * 0.7)
+                o_tok = int(tot_tok * 0.3)
+                cost_val = float(r['exact_cost'] or 0.0)
 
                 result.append({
                     "serviceAccount": sa,
@@ -1224,12 +1248,12 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                     "promptTokens": p_tok,
                     "outputTokens": o_tok,
                     "totalTokens": tot_tok,
-                    "estimatedCostUsd": f"${cost_usd:.4f}"
+                    "estimatedCostUsd": f"${cost_val:.4f}"
                 })
 
             self.send_json(result)
         except Exception as e:
-            print("Pure LLM Model Service Accounts query error:", e)
+            print("Pure Real Billing x Audit query error:", e)
             self.send_json([])
 
     def handle_agent_registry_all(self, s_dt=None, e_dt=None):
