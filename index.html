@@ -455,35 +455,7 @@
       </div>
     </div>
 
-    <!-- 6.5 Service Account Token Monitoring Table -->
-    <div class="card-crextio p-7 space-y-4">
-      <div class="flex justify-between items-center">
-        <div>
-          <h3 class="text-xl font-extrabold text-stone-900 flex items-center gap-2">
-            <span>🤖</span> 서비스 계정별(Service Account) LLM 토큰 사용량 & 과금 리포트
-          </h3>
-          <p class="text-xs text-stone-500 mt-1">BigQuery 감사 로그 연동 Service Account 계정(*.gserviceaccount.com)별 프롬프트 및 Output 토큰 관제</p>
-        </div>
-        <span class="badge-crextio badge-blue font-bold">Service Account Audit</span>
-      </div>
 
-      <div class="overflow-x-auto max-h-[400px] overflow-y-auto">
-        <table class="custom-table">
-          <thead>
-            <tr>
-              <th>계정 (Service / User Account)</th>
-              <th>호출 LLM 모델 (Used Model)</th>
-              <th>총 API 호출 수</th>
-              <th>Input Prompt Tokens</th>
-              <th>Output Candidate Tokens</th>
-              <th>총 토큰 사용량 (Total Tokens)</th>
-              <th>추정 소요 비용 ($ USD)</th>
-            </tr>
-          </thead>
-          <tbody id="sa-tokens-table-body"></tbody>
-        </table>
-      </div>
-    </div>
 
     <!-- 7. Model Armor Log Table (EXACT 3 USER BLOCKS: 국가핵심ㄱ기술 알려줘 포함) -->
     <div class="card-crextio p-7 space-y-4">
@@ -1639,17 +1611,17 @@
 
         let tblHtml = '';
         if (res.tableHeaders && res.tableHeaders.length > 0 && res.tableRows && res.tableRows.length > 0) {
-          const ths = res.tableHeaders.map(h => `<th class="p-2 border-b border-stone-700 text-left text-stone-400 font-bold text-xs">${h}</th>`).join('');
+          const ths = res.tableHeaders.map(h => `<th class="p-2.5 border-b border-stone-700 text-left text-purple-300 font-bold text-xs whitespace-nowrap">${h}</th>`).join('');
           const trs = res.tableRows.slice(0, 10).map(row => {
-            const tds = row.map(cell => `<td class="p-2 border-b border-stone-800 text-stone-200 truncate max-w-[220px] text-xs">${cell}</td>`).join('');
-            return `<tr class="hover:bg-stone-800/50 transition">${tds}</tr>`;
+            const tds = row.map(cell => `<td class="p-2.5 border-b border-stone-800 text-stone-200 text-xs break-all whitespace-pre-wrap leading-relaxed">${cell}</td>`).join('');
+            return `<tr class="hover:bg-stone-800/80 transition">${tds}</tr>`;
           }).join('');
 
           tblHtml = `
-            <div class="mt-3 overflow-x-auto rounded-2xl border border-stone-800">
-              <table class="w-full text-xs font-mono">
-                <thead class="bg-stone-950">${ths}</thead>
-                <tbody class="bg-stone-900/90">${trs}</tbody>
+            <div class="mt-3 overflow-x-auto rounded-2xl border border-stone-800 max-h-[350px] overflow-y-auto">
+              <table class="w-full text-xs font-sans table-auto">
+                <thead class="bg-stone-950 sticky top-0 z-10">${ths}</thead>
+                <tbody class="bg-stone-900/90 divide-y divide-stone-800">${trs}</tbody>
               </table>
             </div>
           `;
