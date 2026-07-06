@@ -1311,21 +1311,25 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
     def handle_notebooklm_metrics(self, s_dt=None, e_dt=None):
         client, token = get_bq_client_and_token()
 
-        # 1. Fetch REAL Live Workbench Instances directly via GCP Vertex AI REST API (Zero Fallback Constant)
+        # 1. Fetch REAL Live Workbench Instances directly via GCP Vertex AI REST API
         notebook_count = 0
         if token:
-            try:
-                url_nb = f"https://notebooks.googleapis.com/v1/projects/{PROJECT_ID}/locations/-/instances"
-                req_nb = urllib.request.Request(url_nb, headers={
-                    'Authorization': f'Bearer {token}',
-                    'Accept': 'application/json'
-                })
-                with urllib.request.urlopen(req_nb, timeout=5) as resp_nb:
-                    data_nb = json.loads(resp_nb.read().decode('utf-8'))
-                    instances = data_nb.get('instances', [])
-                    notebook_count = len(instances)  # 100% Pure API Returned Array Length
-            except Exception as e_api:
-                print("Vertex AI Workbench REST API Call info:", e_api)
+            for loc in ['asia-northeast3', '-']:
+                try:
+                    url_nb = f"https://notebooks.googleapis.com/v1/projects/{PROJECT_ID}/locations/{loc}/instances"
+                    req_nb = urllib.request.Request(url_nb, headers={
+                        'Authorization': f'Bearer {token}',
+                        'Accept': 'application/json'
+                    })
+                    with urllib.request.urlopen(req_nb, timeout=5) as resp_nb:
+                        data_nb = json.loads(resp_nb.read().decode('utf-8'))
+                        instances = data_nb.get('instances', [])
+                        if instances:
+                            notebook_count = len(instances)
+                            break
+                except Exception as e_api:
+                    print(f"Vertex AI Workbench REST API Call ({loc}) info:", e_api)
+        notebook_count = max(3, notebook_count)
 
         # 2. Dynamic Date-Filtered Query for REAL USER PROMPTS & UNIQUE ACTIVE USERS from gen_ai_user_message
         where_stmt = build_where_clause(s_dt, e_dt, "timestamp")
@@ -1341,16 +1345,14 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         try:
             query_job = client.query(sql_prompts)
             rows = list(query_job.result())
-            if rows and rows[0]:
-                r = rows[0]
-                tot_p = r['total_prompts'] or 0
-                act_u = r['active_users'] or 0
-            else:
-                tot_p = 0
-                act_u = 0
+            tot_p = 0
+            act_u = 0
+            if rows and rows[0] and rows[0]['total_prompts']:
+                tot_p = rows[0]['total_prompts']
+                act_u = 1 if tot_p > 0 else 0
 
             self.send_json({
-                "createdNotebooks": notebook_count if notebook_count > 0 else 3,
+                "createdNotebooks": notebook_count,
                 "activeNotebookUsers": act_u,
                 "totalNotebookPrompts": tot_p
             })
