@@ -9,7 +9,6 @@
 
 ```mermaid
 graph TD
-    %% Base Styling Definitions
     classDef gcpFill fill:#4285F4,stroke:#1A73E8,stroke-width:2px,color:#fff;
     classDef bqFill fill:#34A853,stroke:#188038,stroke-width:2px,color:#fff;
     classDef backendFill fill:#EA4335,stroke:#D93025,stroke-width:2px,color:#fff;
@@ -111,7 +110,26 @@ gcloud auth application-default login --scopes="https://www.googleapis.com/auth/
 
 ---
 
-## ⚙️ 3. 환경설정 파일 (`config.yaml`) 운용 안내
+## ☁️ 3. GCP Billing Export (상세 과금 데이터) 설정 방법 초상세 가이드
+
+본 대시보드의 LLM 모델별 과금 추이 및 SKU별 비용 리포트를 동적으로 시각화하려면 GCP 콘솔에서 **Billing Detailed Export (상세 비용 데이터 내보내기)**를 사전 설정해야 합니다.
+
+### 3.1 GCP 콘솔에서 Billing Detailed Export 활성화 스텝-바이-스텝
+1. **GCP 콘솔 접속**: [Google Cloud Console](https://console.cloud.google.com/)에 결제 관리자(Billing Administrator) 계정으로 로그인합니다.
+2. **Billing (결제) 메뉴 이동**: 좌측 상단 탐색 메뉴(≡) -> **Billing (결제)**를 클릭합니다.
+3. **Billing Export 메뉴 이동**: 좌측 사이드바 메뉴에서 **Billing export (결제 데이터 내보내기)**를 클릭합니다.
+4. **Detailed cost export 설정**:
+   - **Detailed cost export (상세 비용 데이터 내보내기)** 탭을 선택하고 **Edit settings (설정 수정)** 버튼을 클릭합니다.
+   - **Projects (프로젝트)**: 과금 데이터를 저장할 GCP 프로젝트 ID(예: `your-gcp-project-id`)를 선택합니다.
+   - **Dataset ID (데이터셋 ID)**: BigQuery 데이터셋 명칭(예: `billing_detailed_usage`)을 입력하거나 신규 생성합니다.
+   - **Save (저장)** 버튼을 클릭합니다.
+5. **결과 확인**:
+   - 설정 완료 후 몇 분 내에 BigQuery 내 해당 데이터셋에 `gcp_billing_export_resource_v1_<BILLING_ACCOUNT_ID>` 이름의 실시간 과금 스트리밍 테이블이 자동으로 생성됩니다.
+   - 테이블명의 끝자리 18자리 문자열(예: `gcp_billing_export_resource_v1_01E9C5_E0B654_4D2CB0`)을 복사하여 `config.yaml` 파일의 `table_id` 항목에 입력합니다.
+
+---
+
+## ⚙️ 4. 환경설정 파일 (`config.yaml`) 운용 안내
 
 본 프로그램은 **`config.yaml` 파일 단 하나만 수정하면 전체 시스템 백엔드 및 프론트엔드가 100% 자동 적용**되도록 완벽히 설계되어 있습니다. 본 소스 코드는 수정을 전혀 하실 필요가 없습니다!
 
@@ -146,34 +164,25 @@ dashboard:
 
 ---
 
-## ☁️ 4. GCP 인프라 사전 준비 (BigQuery & Log Router)
+## ☁️ 5. GCP Log Router (감사 로그 싱크) 생성 가이드
 
-GCP 관리자는 대시보드 가동 전 아래 BigQuery 데이터셋 및 Log Router 싱크를 생성해야 합니다.
+GCP 관리자는 대시보드 감사 로그 및 보안 로그 수집을 위해 아래 명령어를 실행해야 합니다.
 
-### 4.1 BigQuery 데이터셋 생성 (Day Partitioning 적용)
 ```bash
 # 프로젝트 ID 설정
 export PROJECT_ID="your-gcp-project-id"
 
-# 1. 감사 로그 데이터셋 생성
+# 1. 감사 로그 데이터셋 및 보안 데이터셋 사전 생성
 gcloud alpha bq datasets create ge_analytics --project=$PROJECT_ID --location=us-central1
-
-# 2. 과금 Export 데이터셋 생성
-gcloud alpha bq datasets create billing_detailed_usage --project=$PROJECT_ID --location=us-central1
-
-# 3. Model Armor 보안 데이터셋 생성
 gcloud alpha bq datasets create modelarmor_security --project=$PROJECT_ID --location=us-central1
-```
 
-### 4.2 GCP Log Router (로그 싱크) 생성
-```bash
-# 1. 감사 로그 싱크 생성 (Gemini Ent & Vertex AI 감사 로그)
+# 2. 감사 로그 싱크 생성 (Gemini Ent & Vertex AI 감사 로그)
 gcloud logging sinks create lges-audit-sink \
   bigquery.googleapis.com/projects/$PROJECT_ID/datasets/ge_analytics \
   --log-filter='protoPayload.serviceName=("aiplatform.googleapis.com" OR "cloudaudit.googleapis.com")' \
   --project=$PROJECT_ID
 
-# 2. Model Armor 보안 차단 로그 싱크 생성
+# 3. Model Armor 보안 차단 로그 싱크 생성
 gcloud logging sinks create lges-modelarmor-sink \
   bigquery.googleapis.com/projects/$PROJECT_ID/datasets/modelarmor_security \
   --log-filter='jsonPayload.event_type="MODEL_ARMOR_BLOCK"' \
@@ -182,7 +191,7 @@ gcloud logging sinks create lges-modelarmor-sink \
 
 ---
 
-## 💻 5. 로컬(Local) 환경 가동 방법
+## 💻 6. 로컬(Local) 환경 가동 및 검증 방법
 
 ```bash
 # 1. 가상환경 생성 및 활성화
@@ -199,14 +208,14 @@ python3 backend_server.py
 
 ---
 
-## 🚀 6. GCP Cloud Run 실서버 자동 배포 가이드
+## 🚀 7. GCP Cloud Run 실서버 자동 배포 가이드
 
 ```bash
 # 1. GCP 프로젝트 지정
 gcloud config set project your-gcp-project-id
 
 # 2. Cloud Run 원클릭 배포
-gcloud run deploy lges-ai-governance-dashboard \
+gcloud run deploy enterprise-ai-governance-dashboard \
   --source . \
   --region us-central1 \
   --allow-unauthenticated \
@@ -216,7 +225,7 @@ gcloud run deploy lges-ai-governance-dashboard \
 
 ---
 
-## ❓ 7. 트러블슈팅 및 자주 묻는 질문 (FAQ)
+## ❓ 8. 트러블슈팅 및 자주 묻는 질문 (FAQ)
 
 ### Q1. 당일 Gemini 3.5 Flash 호출 통계 및 과금 비용이 대시보드 그래프에 바로 안 보입니다.
 > **원인**: GCP Billing Detailed Export (BigQuery 과금 연동) 파이프라인 특성상 **2시간~4시간(최대 12시간)의 배치 정산 지연(Latency)**이 발생합니다.<br>

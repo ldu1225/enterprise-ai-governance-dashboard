@@ -12,7 +12,7 @@ server:
 
 gcp:
   # GCP 프로젝트 ID (예: "your-gcp-project-id")
-  project_id: "duleetest"
+  project_id: "your-gcp-project-id"
   
   # BigQuery 감사 로그(Cloud Audit Logs & Model Armor Logs) 데이터셋 ID
   audit_dataset_id: "ge_analytics"
@@ -21,8 +21,8 @@ gcp:
   billing:
     dataset_id: "billing_detailed_usage"
     # 실시간 GCP 과금 스트림 테이블명 (예: "gcp_billing_export_resource_v1_XXXXXX_XXXXXX_XXXXXX")
-    table_id: "gcp_billing_export_resource_v1_01E9C5_E0B654_4D2CB0"
-    account_id: "01E9C5-E0B654-4D2CB0"
+    table_id: "gcp_billing_export_resource_v1_XXXXXX_XXXXXX_XXXXXX"
+    account_id: "XXXXXX-XXXXXX-XXXXXX"
 
 dashboard:
   title: "Enterprise AI Governance"
