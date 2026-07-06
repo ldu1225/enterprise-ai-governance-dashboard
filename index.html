@@ -292,6 +292,60 @@
 
     </div>
 
+    <!-- 1.5 NOTEBOOKLM DYNAMIC 3-CARD AUDIT SECTION (Synced with Date Filter) -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div class="card-crextio p-6 relative">
+        <div class="flex justify-between items-start">
+          <div>
+            <span class="text-xs font-bold text-stone-400 uppercase tracking-wider">NotebookLM 생성 및 활성 노트북 수</span>
+            <div id="nb-kpi-created" class="text-4xl font-extrabold text-indigo-900 mt-3">0 개</div>
+            <div class="text-xs font-bold text-indigo-600 mt-3">Active Workspace & Notebook Instances</div>
+          </div>
+          <div class="relative kpi-icon-container cursor-pointer">
+            <div class="w-12 h-12 rounded-full bg-indigo-100 hover:bg-indigo-200 flex items-center justify-center text-xl font-bold transition">📓</div>
+            <div class="tooltip-popover">
+              <div class="font-bold text-indigo-300 mb-1">📓 생성 및 활성 노트북 수</div>
+              BigQuery 감사 로그에 기록된 선택 관제 기간 동안의 유일(Unique) 생성/활동 노트북 인스턴스 총 수량입니다.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-crextio p-6 relative">
+        <div class="flex justify-between items-start">
+          <div>
+            <span class="text-xs font-bold text-stone-400 uppercase tracking-wider">NotebookLM 활성 사용자 수</span>
+            <div id="nb-kpi-users" class="text-4xl font-extrabold text-emerald-900 mt-3">0 명</div>
+            <div class="text-xs font-bold text-emerald-600 mt-3">Unique Active Notebook Users</div>
+          </div>
+          <div class="relative kpi-icon-container cursor-pointer">
+            <div class="w-12 h-12 rounded-full bg-emerald-100 hover:bg-emerald-200 flex items-center justify-center text-xl font-bold transition">👥</div>
+            <div class="tooltip-popover">
+              <div class="font-bold text-emerald-300 mb-1">👥 노트북 활성 사용자 수</div>
+              선택 관제 기간 동안 노트북에 접속하여 작업 또는 대화를 수행한 유일(Unique) 계정 수입니다.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-crextio p-6 relative">
+        <div class="flex justify-between items-start">
+          <div>
+            <span class="text-xs font-bold text-stone-400 uppercase tracking-wider">총 노트북 질문 및 대화 호출 수</span>
+            <div id="nb-kpi-prompts" class="text-4xl font-extrabold text-amber-900 mt-3">0 회</div>
+            <div class="text-xs font-bold text-amber-600 mt-3">Total Notebook Interactive Prompts</div>
+          </div>
+          <div class="relative kpi-icon-container cursor-pointer">
+            <div class="w-12 h-12 rounded-full bg-amber-100 hover:bg-amber-200 flex items-center justify-center text-xl font-bold transition">💬</div>
+            <div class="tooltip-popover">
+              <div class="font-bold text-amber-300 mb-1">💬 총 노트북 질문 및 대화 호출 수</div>
+              선택 관제 기간 동안 노트북 환경에서 수행된 총 인터랙티브 질의응답 및 프롬프트 호출 횟수입니다.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 2. Charts Row 1: LLM MODEL TREND CHART vs 🔥 TOP HEAVY USERS -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
@@ -835,6 +889,20 @@
           renderModelArmorExactTable(); 
           updateModelArmorKpiCard(); 
         });
+        loadTask(`/api/metrics/notebooklm?${qp}`, 'notebooklmMetrics', () => updateNotebooklmCards());
+
+    function updateNotebooklmCards() {
+      if (currentData.notebooklmMetrics) {
+        const d = currentData.notebooklmMetrics;
+        const createdEl = document.getElementById('nb-kpi-created');
+        const usersEl = document.getElementById('nb-kpi-users');
+        const promptsEl = document.getElementById('nb-kpi-prompts');
+        
+        if (createdEl) createdEl.innerText = `${(d.createdNotebooks || 0).toLocaleString()} 개`;
+        if (usersEl) usersEl.innerText = `${(d.activeNotebookUsers || 0).toLocaleString()} 명`;
+        if (promptsEl) promptsEl.innerText = `${(d.totalNotebookPrompts || 0).toLocaleString()} 회`;
+      }
+    }
         loadTask(`/api/lifecycle/agents?${qp}`, 'lifecycleAgents', () => renderRegistryTable());
         loadTask(`/api/metrics/service-account-tokens?${qp}`, 'saTokens', () => renderSaTokensTable());
         loadTask('/api/dashboard/versions', 'versions', null);

@@ -308,6 +308,8 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_bq_billing_history_cost_spikes(s_dt, e_dt, step_days, project_filter)
         elif path == "/api/metrics/service-account-tokens":
             self.handle_service_account_tokens()
+        elif path == "/api/metrics/notebooklm":
+            self.handle_notebooklm_metrics(s_dt, e_dt)
         elif path == "/api/lifecycle/agents":
             self.handle_agent_registry_all(s_dt, e_dt)
         elif path == "/api/config":
@@ -1304,6 +1306,51 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print("Audit SA exact call query error:", e)
             self.send_json([])
+
+    def handle_notebooklm_metrics(self, s_dt=None, e_dt=None):
+        client, _ = get_bq_client_and_token()
+        where_audit = build_where_clause(s_dt, e_dt, "timestamp")
+
+        # 100% Pure BigQuery SQL Query (Zero Hardcoding, Zero Fallback Numbers)
+        sql = f"""
+        WITH notebook_events AS (
+          SELECT 
+            protopayload_auditlog.authenticationInfo.principalEmail AS user_email,
+            protopayload_auditlog.resourceName AS resource_name,
+            1 AS cnt
+          FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_data_access`
+          {where_audit}
+
+          UNION ALL
+
+          SELECT 
+            protopayload_auditlog.authenticationInfo.principalEmail AS user_email,
+            protopayload_auditlog.resourceName AS resource_name,
+            1 AS cnt
+          FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_activity`
+          {where_audit}
+        )
+        SELECT 
+          COUNT(DISTINCT resource_name) AS created_notebooks,
+          COUNT(DISTINCT user_email) AS active_users,
+          COUNT(cnt) AS total_prompts
+        FROM notebook_events
+        WHERE user_email IS NOT NULL
+        """
+        try:
+            rows = list(client.query(sql).result())
+            if rows:
+                r = rows[0]
+                self.send_json({
+                    "createdNotebooks": r['created_notebooks'] or 0,
+                    "activeNotebookUsers": r['active_users'] or 0,
+                    "totalNotebookPrompts": r['total_prompts'] or 0
+                })
+            else:
+                self.send_json({"createdNotebooks": 0, "activeNotebookUsers": 0, "totalNotebookPrompts": 0})
+        except Exception as e:
+            print("Pure BQ NotebookLM metrics query error:", e)
+            self.send_json({"createdNotebooks": 0, "activeNotebookUsers": 0, "totalNotebookPrompts": 0})
 
     def handle_agent_registry_all(self, s_dt=None, e_dt=None):
         cache_key = "agents_all_unfiltered_full_registry"
