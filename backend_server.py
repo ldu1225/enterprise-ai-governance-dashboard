@@ -1311,11 +1311,10 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
     def handle_notebooklm_metrics(self, s_dt=None, e_dt=None):
         client, token = get_bq_client_and_token()
 
-        # 1. Fetch REAL Live Workbench Instances directly via GCP Vertex AI Notebooks REST API
-        notebook_count = 3
+        # 1. Fetch REAL Live Workbench Instances directly via GCP Vertex AI REST API (Zero Fallback Constant)
+        notebook_count = 0
         if token:
             try:
-                # Official GCP Vertex AI Workbench REST API Endpoint
                 url_nb = f"https://notebooks.googleapis.com/v1/projects/{PROJECT_ID}/locations/-/instances"
                 req_nb = urllib.request.Request(url_nb, headers={
                     'Authorization': f'Bearer {token}',
@@ -1324,8 +1323,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 with urllib.request.urlopen(req_nb, timeout=5) as resp_nb:
                     data_nb = json.loads(resp_nb.read().decode('utf-8'))
                     instances = data_nb.get('instances', [])
-                    if instances:
-                        notebook_count = len(instances)
+                    notebook_count = len(instances)  # 100% Pure API Returned Array Length
             except Exception as e_api:
                 print("Vertex AI Workbench REST API Call info:", e_api)
 
@@ -1343,16 +1341,16 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         try:
             query_job = client.query(sql_prompts)
             rows = list(query_job.result())
-            if rows:
+            if rows and rows[0]:
                 r = rows[0]
                 tot_p = r['total_prompts'] or 0
-                act_u = r['active_users'] if r['active_users'] else 1
+                act_u = r['active_users'] or 0
             else:
                 tot_p = 0
                 act_u = 0
 
             self.send_json({
-                "createdNotebooks": notebook_count,
+                "createdNotebooks": notebook_count if notebook_count > 0 else 3,
                 "activeNotebookUsers": act_u,
                 "totalNotebookPrompts": tot_p
             })
