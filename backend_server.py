@@ -1311,10 +1311,10 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
     def handle_notebooklm_metrics(self, s_dt=None, e_dt=None):
         client, token = get_bq_client_and_token()
 
-        # 1. Fetch REAL Live Workbench Instances directly via GCP Vertex AI REST API
+        # 1. Fetch REAL Live Workbench Instances directly via GCP Vertex AI REST API (Pure Raw GET List Length)
         notebook_count = 0
         if token:
-            for loc in ['asia-northeast3', '-']:
+            for loc in ['us-central1', 'asia-northeast3', '-']:
                 try:
                     url_nb = f"https://notebooks.googleapis.com/v1/projects/{PROJECT_ID}/locations/{loc}/instances"
                     req_nb = urllib.request.Request(url_nb, headers={
@@ -1324,8 +1324,8 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                     with urllib.request.urlopen(req_nb, timeout=5) as resp_nb:
                         data_nb = json.loads(resp_nb.read().decode('utf-8'))
                         instances = data_nb.get('instances', [])
+                        notebook_count = len(instances)  # Pure Raw GET List Length
                         if instances:
-                            notebook_count = len(instances)
                             break
                 except Exception as e_api:
                     print(f"Vertex AI Workbench REST API Call ({loc}) info:", e_api)
