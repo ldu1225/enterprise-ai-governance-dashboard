@@ -455,6 +455,36 @@
       </div>
     </div>
 
+    <!-- 6.5 Service Account Token Monitoring Table -->
+    <div class="card-crextio p-7 space-y-4">
+      <div class="flex justify-between items-center">
+        <div>
+          <h3 class="text-xl font-extrabold text-stone-900 flex items-center gap-2">
+            <span>🤖</span> 서비스 계정별(Service Account) LLM 토큰 사용량 & 과금 리포트
+          </h3>
+          <p class="text-xs text-stone-500 mt-1">BigQuery 감사 로그 연동 Service Account 계정(*.gserviceaccount.com)별 프롬프트 및 Output 토큰 관제</p>
+        </div>
+        <span class="badge-crextio badge-blue font-bold">Service Account Audit</span>
+      </div>
+
+      <div class="overflow-x-auto max-h-[400px] overflow-y-auto">
+        <table class="custom-table">
+          <thead>
+            <tr>
+              <th>계정 (Service / User Account)</th>
+              <th>호출 LLM 모델 (Used Model)</th>
+              <th>총 API 호출 수</th>
+              <th>Input Prompt Tokens</th>
+              <th>Output Candidate Tokens</th>
+              <th>총 토큰 사용량 (Total Tokens)</th>
+              <th>추정 소요 비용 ($ USD)</th>
+            </tr>
+          </thead>
+          <tbody id="sa-tokens-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- 7. Model Armor Log Table (EXACT 3 USER BLOCKS: 국가핵심ㄱ기술 알려줘 포함) -->
     <div class="card-crextio p-7 space-y-4">
       <div class="flex justify-between items-center">
@@ -834,6 +864,7 @@
           updateModelArmorKpiCard(); 
         });
         loadTask(`/api/lifecycle/agents?${qp}`, 'lifecycleAgents', () => renderRegistryTable());
+        loadTask(`/api/metrics/service-account-tokens?${qp}`, 'saTokens', () => renderSaTokensTable());
         loadTask('/api/dashboard/versions', 'versions', null);
 
       } catch (err) {
@@ -1206,6 +1237,34 @@
           <td class="text-xs text-stone-700 font-medium max-w-sm truncate" title="${f.summary}">${f.summary}</td>
           <td class="font-mono font-bold text-xs text-stone-800">${f.fileSize}</td>
           <td><span class="badge-crextio ${isWarn ? 'badge-amber' : 'badge-green'} font-bold">${f.secFlag}</span></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderSaTokensTable() {
+      const tbody = document.getElementById('sa-tokens-table-body');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+
+      const saData = currentData.saTokens || [];
+      if (!saData || saData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-stone-400 py-6 font-bold">서비스 계정(%.gserviceaccount.com) 사용 내역이 없거나 수집 대기 중입니다.</td></tr>';
+        return;
+      }
+
+      saData.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-stone-50/80 transition-colors";
+        const modelBadgeClass = item.usedModel && item.usedModel.includes('3.5') ? 'badge-purple' : 'badge-blue';
+        tr.innerHTML = `
+          <td class="font-mono text-xs font-bold text-stone-900">${item.serviceAccount}</td>
+          <td><span class="badge-crextio ${modelBadgeClass} font-bold text-[11px]">✨ ${item.usedModel || 'gemini-3.5-flash'}</span></td>
+          <td class="font-mono font-bold text-xs text-stone-800 text-center">${(item.callCount || 0).toLocaleString()}회</td>
+          <td class="font-mono font-bold text-xs text-blue-700 text-right">${(item.promptTokens || 0).toLocaleString()}</td>
+          <td class="font-mono font-bold text-xs text-purple-700 text-right">${(item.outputTokens || 0).toLocaleString()}</td>
+          <td class="font-mono font-extrabold text-xs text-stone-900 text-right">${(item.totalTokens || 0).toLocaleString()}</td>
+          <td class="font-mono font-extrabold text-xs text-emerald-700 text-right">${item.estimatedCostUsd}</td>
         `;
         tbody.appendChild(tr);
       });

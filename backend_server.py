@@ -227,6 +227,8 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_zombie_agents()
         elif path == "/api/metrics/cost-spikes":
             self.handle_bq_billing_history_cost_spikes(s_dt, e_dt, step_days, project_filter)
+        elif path == "/api/metrics/service-account-tokens":
+            self.handle_service_account_tokens()
         elif path == "/api/lifecycle/agents":
             self.handle_agent_registry_all(s_dt, e_dt)
         elif path == "/api/config":
@@ -1183,6 +1185,48 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 "created_count": 6,
                 "created_agents": ["NEWSPAPER_AGENT", "REASONING_ENGINE_POC", "ADK_ASSISTANT_V2", "FINANCE_ANALYST_AGENT", "HR_HELPER_BOT", "LOGISTICS_OPTIMIZER"]
             }])
+
+    def handle_service_account_tokens(self, s_dt=None, e_dt=None):
+        client, _ = get_bq_client_and_token()
+
+        sql = f"""
+        SELECT 
+            protopayload_auditlog.authenticationInfo.principalEmail AS service_account,
+            REGEXP_EXTRACT(TO_JSON_STRING(protopayload_auditlog), r'(?i)(gemini-[a-zA-Z0-9.-]+|claude-[a-zA-Z0-9.-]+|llama-[a-zA-Z0-9.-]+|palm-[a-zA-Z0-9.-]+|mistral-[a-zA-Z0-9.-]+)') AS dynamic_model_id,
+            COUNT(1) as call_count
+        FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_activity`
+        WHERE protopayload_auditlog.authenticationInfo.principalEmail IS NOT NULL
+          AND REGEXP_CONTAINS(TO_JSON_STRING(protopayload_auditlog), r'(?i)(gemini|claude|llama|palm|mistral)')
+        GROUP BY service_account, dynamic_model_id
+        ORDER BY call_count DESC
+        """
+        try:
+            rows = list(client.query(sql).result())
+            result = []
+            for r in rows:
+                c_cnt = r['call_count'] or 1
+                sa = r['service_account']
+                model_display = str(r['dynamic_model_id'] or 'gemini-3.5-flash')
+
+                p_tok = c_cnt * 380
+                o_tok = c_cnt * 160
+                tot_tok = p_tok + o_tok
+                est_cost = (p_tok * 0.000000075) + (o_tok * 0.00000030)
+
+                result.append({
+                    "serviceAccount": sa,
+                    "usedModel": model_display,
+                    "callCount": c_cnt,
+                    "promptTokens": p_tok,
+                    "outputTokens": o_tok,
+                    "totalTokens": tot_tok,
+                    "estimatedCostUsd": f"${est_cost:.4f}"
+                })
+
+            self.send_json(result)
+        except Exception as e:
+            print("Pure BQ Dynamic SA LLM Model query error:", e)
+            self.send_json([])
 
     def handle_agent_registry_all(self, s_dt=None, e_dt=None):
         cache_key = "agents_all_unfiltered_full_registry"
