@@ -1,0 +1,31 @@
+# ==============================================================================
+# Enterprise AI Governance & Agent Platform Dashboard Configuration (config.yaml)
+# ==============================================================================
+# 고객사 환경에 맞게 아래 GCP 프로젝트 ID, BigQuery 데이터셋/테이블명, 서버 포트 등을 수정하십시오.
+# 본 파일만 수정하면 백엔드 및 프론트엔드가 100% 자동 적용됩니다.
+# ==============================================================================
+
+server:
+  port: 8088
+  host: "0.0.0.0"
+  cache_ttl_seconds: 300  # API 응답 쿼리 캐시 유지 시간 (초)
+
+gcp:
+  # GCP 프로젝트 ID (예: "your-gcp-project-id")
+  project_id: "duleetest"
+  
+  # BigQuery 감사 로그(Cloud Audit Logs & Model Armor Logs) 데이터셋 ID
+  audit_dataset_id: "ge_analytics"
+  
+  # BigQuery GCP Billing Detailed Export 데이터셋 및 실시간 스트리밍 테이블 ID
+  billing:
+    dataset_id: "billing_detailed_usage"
+    # 실시간 GCP 과금 스트림 테이블명 (예: "gcp_billing_export_resource_v1_XXXXXX_XXXXXX_XXXXXX")
+    table_id: "gcp_billing_export_resource_v1_01E9C5_E0B654_4D2CB0"
+    account_id: "01E9C5-E0B654-4D2CB0"
+
+dashboard:
+  title: "Enterprise AI Governance"
+  subtitle: "AI Governance & Agent Platform Control Center"
+  logo_path: "/lg_logo.png"
+  default_days: 7
