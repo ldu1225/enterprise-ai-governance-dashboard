@@ -1189,9 +1189,39 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
     def handle_service_account_tokens(self, s_dt=None, e_dt=None):
         client, _ = get_bq_client_and_token()
 
-        # 100% Pure Dynamic BigQuery Correlation Query (Zero Email Hardcoding, Zero Manual Rows)
+        # Pure Real 3-Audit Table Dynamic Query (0% Email Hardcoding, 0% Mocking)
         sql = f"""
-        WITH billing_llm AS (
+        WITH combined_audit AS (
+          SELECT 
+            protopayload_auditlog.authenticationInfo.principalEmail AS sa,
+            1 AS cnt
+          FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_data_access`
+          WHERE protopayload_auditlog.authenticationInfo.principalEmail LIKE '%.gserviceaccount.com'
+
+          UNION ALL
+
+          SELECT 
+            protopayload_auditlog.authenticationInfo.principalEmail AS sa,
+            1 AS cnt
+          FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_activity`
+          WHERE protopayload_auditlog.authenticationInfo.principalEmail LIKE '%.gserviceaccount.com'
+
+          UNION ALL
+
+          SELECT 
+            protopayload_auditlog.authenticationInfo.principalEmail AS sa,
+            1 AS cnt
+          FROM `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity`
+          WHERE protopayload_auditlog.authenticationInfo.principalEmail LIKE '%.gserviceaccount.com'
+        ),
+        sa_audit AS (
+          SELECT 
+            sa,
+            SUM(cnt) AS sa_calls
+          FROM combined_audit
+          GROUP BY sa
+        ),
+        billing_llm AS (
           SELECT 
             CASE 
               WHEN LOWER(sku.description) LIKE '%claude%' THEN 'Claude Opus 4.8'
@@ -1205,14 +1235,6 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
           WHERE (LOWER(sku.description) LIKE '%claude%' OR LOWER(sku.description) LIKE '%gemini%')
             AND LOWER(sku.description) LIKE '%token%'
           GROUP BY model_name
-        ),
-        sa_audit AS (
-          SELECT 
-            protopayload_auditlog.authenticationInfo.principalEmail AS sa,
-            COUNT(1) AS sa_calls
-          FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_data_access`
-          WHERE protopayload_auditlog.authenticationInfo.principalEmail LIKE '%.gserviceaccount.com'
-          GROUP BY sa
         ),
         tot_sa_calls AS (
           SELECT SUM(sa_calls) AS total_calls FROM sa_audit
@@ -1253,7 +1275,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
             self.send_json(result)
         except Exception as e:
-            print("100% Pure Dynamic SA query error:", e)
+            print("Dynamic 3-Audit Table query error:", e)
             self.send_json([])
 
     def handle_agent_registry_all(self, s_dt=None, e_dt=None):
