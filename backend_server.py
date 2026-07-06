@@ -1310,63 +1310,43 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def handle_notebooklm_metrics(self, s_dt=None, e_dt=None):
         client, token = get_bq_client_and_token()
+        where_audit = build_where_clause(s_dt, e_dt, "timestamp")
 
-        # 1. Fetch REAL Live Notebook Instances directly via GCP REST API (Exact 14 Notebooks)
-        notebook_count = 14
-        if token:
-            try:
-                url_nb = f"https://notebooks.googleapis.com/v1/projects/{PROJECT_ID}/locations/-/instances"
-                req_nb = urllib.request.Request(url_nb, headers={'Authorization': f'Bearer {token}'})
-                with urllib.request.urlopen(req_nb, timeout=5) as resp_nb:
-                    data_nb = json.loads(resp_nb.read().decode('utf-8'))
-                    instances = data_nb.get('instances', [])
-                    if instances:
-                        notebook_count = len(instances)
-            except Exception as e_api:
-                print("Vertex AI Notebooks API Direct Call info:", e_api)
-
-        # 2. Dynamic Date-Filtered Query for EXACT REAL USER PROMPTS from gen_ai_user_message table
-        where_stmt = build_where_clause(s_dt, e_dt, "timestamp")
-        
+        # 100% Pure BigQuery Standard SQL (Zero Hardcoding Numbers)
         sql = f"""
         SELECT 
+          COUNT(DISTINCT protopayload_auditlog.resourceName) AS created_notebooks,
+          COUNT(DISTINCT protopayload_auditlog.authenticationInfo.principalEmail) AS active_users,
           COUNT(1) AS total_prompts
-        FROM `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gen_ai_user_message`
-        {where_stmt}
-        """
-
-        sql_users = f"""
-        SELECT 
-          COUNT(DISTINCT protopayload_auditlog.authenticationInfo.principalEmail) AS active_users
         FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_data_access`
-        {where_stmt}
+        {where_audit}
           AND protopayload_auditlog.authenticationInfo.principalEmail LIKE '%@%'
           AND protopayload_auditlog.authenticationInfo.principalEmail NOT LIKE '%gserviceaccount.com%'
           AND protopayload_auditlog.authenticationInfo.principalEmail NOT LIKE '%system%'
         """
 
         try:
-            tot_p = 195
-            rows_p = list(client.query(sql).result())
-            if rows_p and rows_p[0]['total_prompts']:
-                tot_p = rows_p[0]['total_prompts']
-
-            act_u = 2
-            rows_u = list(client.query(sql_users).result())
-            if rows_u and rows_u[0]['active_users']:
-                act_u = rows_u[0]['active_users']
-
-            self.send_json({
-                "createdNotebooks": notebook_count,
-                "activeNotebookUsers": act_u,
-                "totalNotebookPrompts": tot_p
-            })
+            query_job = client.query(sql)
+            rows = list(query_job.result())
+            if rows:
+                r = rows[0]
+                self.send_json({
+                    "createdNotebooks": r['created_notebooks'] or 0,
+                    "activeNotebookUsers": r['active_users'] or 0,
+                    "totalNotebookPrompts": r['total_prompts'] or 0
+                })
+            else:
+                self.send_json({
+                    "createdNotebooks": 0,
+                    "activeNotebookUsers": 0,
+                    "totalNotebookPrompts": 0
+                })
         except Exception as e:
-            print("Exact user prompt count query error:", e)
+            print("Pure Live BQ NotebookLM metrics query error:", e)
             self.send_json({
-                "createdNotebooks": notebook_count,
-                "activeNotebookUsers": 2,
-                "totalNotebookPrompts": 195
+                "createdNotebooks": 0,
+                "activeNotebookUsers": 0,
+                "totalNotebookPrompts": 0
             })
 
     def handle_agent_registry_all(self, s_dt=None, e_dt=None):
