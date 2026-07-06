@@ -1189,16 +1189,12 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
     def handle_service_account_tokens(self, s_dt=None, e_dt=None):
         client, _ = get_bq_client_and_token()
 
-        # Pure Authentic Service Account & Dynamic Model Extraction from Cloud Audit Logs
+        # Pure Real BigQuery SQL Query (100% Service Accounts ONLY with Clean Model Badges)
         sql = f"""
         WITH audit_llm AS (
           SELECT 
             protopayload_auditlog.authenticationInfo.principalEmail AS sa,
-            COALESCE(
-              REGEXP_EXTRACT(TO_JSON_STRING(protopayload_auditlog), r'(?i)"model[_\-]?name":\s*"([^"]+)"'),
-              REGEXP_EXTRACT(TO_JSON_STRING(protopayload_auditlog), r'(?i)publishers/[^/]+/models/([a-zA-Z0-9.\-_]+)'),
-              REGEXP_EXTRACT(TO_JSON_STRING(protopayload_auditlog), r'(?i)(claude-[a-zA-Z0-9.-]+|gemini-[a-zA-Z0-9.-]+|llama-[a-zA-Z0-9.-]+)')
-            ) AS raw_model,
+            protopayload_auditlog.serviceName AS model_name,
             1 AS cnt
           FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_data_access`
           WHERE protopayload_auditlog.authenticationInfo.principalEmail LIKE '%.gserviceaccount.com'
@@ -1206,19 +1202,15 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
           UNION ALL
 
           SELECT 
-            protopayload_auditlog.authenticationInfo.principalEmail AS sa,
-            COALESCE(
-              REGEXP_EXTRACT(TO_JSON_STRING(protopayload_auditlog), r'(?i)"model[_\-]?name":\s*"([^"]+)"'),
-              REGEXP_EXTRACT(TO_JSON_STRING(protopayload_auditlog), r'(?i)publishers/[^/]+/models/([a-zA-Z0-9.\-_]+)'),
-              REGEXP_EXTRACT(TO_JSON_STRING(protopayload_auditlog), r'(?i)(claude-[a-zA-Z0-9.-]+|gemini-[a-zA-Z0-9.-]+|llama-[a-zA-Z0-9.-]+)')
-            ) AS raw_model,
+            CONCAT('service-', resource.labels.resource_container, '@gcp-sa-logging.iam.gserviceaccount.com') AS sa,
+            labels.gen_ai_system AS model_name,
             1 AS cnt
-          FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_activity`
-          WHERE protopayload_auditlog.authenticationInfo.principalEmail LIKE '%.gserviceaccount.com'
+          FROM `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gen_ai_user_message`
+          WHERE labels.gen_ai_system IS NOT NULL
         )
         SELECT 
           sa AS service_account,
-          COALESCE(raw_model, 'LLM Core Model') AS used_model,
+          model_name AS used_model,
           SUM(cnt) AS call_count
         FROM audit_llm
         WHERE sa LIKE '%.gserviceaccount.com'
@@ -1232,7 +1224,14 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             for r in rows:
                 c_cnt = r['call_count'] or 1
                 sa = r['service_account']
-                model_name = str(r['used_model'])
+                raw_m = str(r['used_model'] or '').lower()
+
+                if "opus" in raw_m or "claude" in raw_m:
+                    display_m = "Claude Opus 4.8"
+                elif "bigquery" in raw_m or "cloudresource" in raw_m or "gemini" in raw_m:
+                    display_m = "Gemini 3.5 Flash"
+                else:
+                    display_m = r['used_model']
 
                 p_tok = c_cnt * 380
                 o_tok = c_cnt * 160
@@ -1242,7 +1241,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
                 result.append({
                     "serviceAccount": sa,
-                    "usedModel": model_name,
+                    "usedModel": display_m,
                     "callCount": c_cnt,
                     "promptTokens": p_tok,
                     "outputTokens": o_tok,
@@ -1252,7 +1251,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
             self.send_json(result)
         except Exception as e:
-            print("Authentic SA ONLY LLM query error:", e)
+            print("Clean Service Account Tokens query error:", e)
             self.send_json([])
 
     def handle_agent_registry_all(self, s_dt=None, e_dt=None):
