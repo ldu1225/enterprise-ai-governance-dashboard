@@ -467,14 +467,21 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 m_id = cat.lower().replace(' ', '-').replace('.', '-')
                 tot_c = cat_totals[cat]['cost']
                 tot_calls = cat_totals[cat]['calls']
-                token_est = tot_calls * 125000 if tot_calls > 0 else 100000
+                token_est = tot_calls
                 
+                if token_est >= 1_000_000:
+                    tok_fmt = f"{token_est / 1_000_000:.2f}M Tokens"
+                elif token_est >= 1_000:
+                    tok_fmt = f"{token_est / 1_000:.1f}K Tokens"
+                else:
+                    tok_fmt = f"{token_est:,} Tokens"
+
                 dynamic_models.append({
                     "id": m_id,
                     "name": cat,
                     "rawCategory": cat,
                     "color": color_palette.get(cat, '#64748b'),
-                    "formattedTokens": f"{token_est / 1000000:.2f}M Tokens" if token_est >= 1000000 else f"{token_est / 1000:.1f}K Tokens",
+                    "formattedTokens": tok_fmt,
                     "formattedCost": f"${tot_c:.2f} USD"
                 })
 
@@ -520,13 +527,12 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 tot_c = cat_totals.get(cat_name, {}).get('cost', 0.0)
                 tot_calls = cat_totals.get(cat_name, {}).get('calls', 0)
                 
-                if cat_name == 'Claude Sonnet 4.5' and tot_c == 0:
-                    tot_c = 14.67
-                    str_tok = "40.5K Tokens"
-                elif tot_calls == 0:
-                    str_tok = "1.5K Tokens"
+                if tot_calls >= 1_000_000:
+                    str_tok = f"{tot_calls / 1_000_000:.2f}M Tokens"
+                elif tot_calls >= 1_000:
+                    str_tok = f"{tot_calls / 1_000:.1f}K Tokens"
                 else:
-                    str_tok = f"{tot_calls * 1.5:.1f}K Tokens"
+                    str_tok = f"{tot_calls:,} Tokens"
 
                 summaries.append({
                     "id": m["id"],
