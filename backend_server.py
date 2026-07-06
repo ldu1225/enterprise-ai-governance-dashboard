@@ -1331,15 +1331,18 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                     print(f"Vertex AI Workbench REST API Call ({loc}) info:", e_api)
  
 
-        # 2. Dynamic Date-Filtered Query for REAL USER PROMPTS & UNIQUE ACTIVE USERS from gen_ai_user_message
+        # 2. Strict Filter for REAL PURE NotebookLM Prompts from CloudAudit (Zero DiscoveryEngine Mixup)
         where_stmt = build_where_clause(s_dt, e_dt, "timestamp")
         
         sql_prompts = f"""
         SELECT 
           COUNT(1) AS total_prompts,
-          COUNT(DISTINCT JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.user')) AS active_users
-        FROM `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gen_ai_user_message`
+          COUNT(DISTINCT protopayload_auditlog.authenticationInfo.principalEmail) AS active_users
+        FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_data_access`
         {where_stmt}
+          AND LOWER(protopayload_auditlog.serviceName) LIKE '%notebook%'
+          AND protopayload_auditlog.authenticationInfo.principalEmail LIKE '%@%'
+          AND protopayload_auditlog.authenticationInfo.principalEmail NOT LIKE '%gserviceaccount.com%'
         """
 
         try:
@@ -1347,9 +1350,9 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             rows = list(query_job.result())
             tot_p = 0
             act_u = 0
-            if rows and rows[0] and rows[0]['total_prompts']:
-                tot_p = rows[0]['total_prompts']
-                act_u = 1 if tot_p > 0 else 0
+            if rows and rows[0]:
+                tot_p = rows[0]['total_prompts'] or 0
+                act_u = rows[0]['active_users'] or 0
 
             self.send_json({
                 "createdNotebooks": notebook_count,
@@ -1357,7 +1360,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 "totalNotebookPrompts": tot_p
             })
         except Exception as e:
-            print("Exact real user message query error:", e)
+            print("Exact real pure notebooklm audit query error:", e)
             self.send_json({
                 "createdNotebooks": notebook_count,
                 "activeNotebookUsers": 0,
