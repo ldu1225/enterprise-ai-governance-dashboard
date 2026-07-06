@@ -398,6 +398,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             DATE(usage_start_time) as log_date,
             sku.description as sku_desc,
             cost,
+            usage.amount as token_amount,
             CASE 
               WHEN LOWER(sku.description) LIKE '%claude%' THEN 'Claude Sonnet 4.5'
               WHEN LOWER(sku.description) LIKE '%gemini 3.5%' OR LOWER(sku.description) LIKE '%gemini 3.5 flash%' THEN 'Gemini 3.5 Flash'
@@ -411,12 +412,11 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
               ELSE 'GCP Core Infra Services'
             END AS model_category
           FROM `{PROJECT_ID}.{BILLING_DATASET}.{BILLING_TABLE}`
-          {where_billing}
         )
         SELECT
           log_date,
           model_category,
-          COUNT(1) as call_count,
+          CAST(SUM(token_amount) AS INT64) as call_count,
           SUM(cost) as total_cost
         FROM parsed_billing
         GROUP BY log_date, model_category
