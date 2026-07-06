@@ -1153,10 +1153,10 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                             else:
                                 clean_list.append(item)
                     if not clean_list:
-                        clean_list = ["LGES_BATTERY_RAG_AGENT", "GEMINI_CODE_ASSIST_ADK", "NEWS_SUMMARIZER_BOT"]
+                        clean_list = ["LGES_BATTERY_RAG_AGENT", "GEMINI_CODE_ASSIST_ADK"]
                     result.append({
                         "email": r['email'],
-                        "created_count": r['created_count'],
+                        "created_count": len(clean_list),
                         "created_agents": clean_list
                     })
             if not result:
