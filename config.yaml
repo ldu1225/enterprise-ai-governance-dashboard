@@ -11,8 +11,8 @@ server:
   cache_ttl_seconds: 300  # API 응답 쿼리 캐시 유지 시간 (초)
 
 gcp:
-  # GCP 프로젝트 ID (예: "your-gcp-project-id")
-  project_id: "your-gcp-project-id"
+  # GCP 프로젝트 ID
+  project_id: "duleetest"
   
   # BigQuery 감사 로그(Cloud Audit Logs & Model Armor Logs) 데이터셋 ID
   audit_dataset_id: "ge_analytics"
@@ -20,12 +20,11 @@ gcp:
   # BigQuery GCP Billing Detailed Export 데이터셋 및 실시간 스트리밍 테이블 ID
   billing:
     dataset_id: "billing_detailed_usage"
-    # 실시간 GCP 과금 스트림 테이블명 (예: "gcp_billing_export_resource_v1_XXXXXX_XXXXXX_XXXXXX")
-    table_id: "gcp_billing_export_resource_v1_XXXXXX_XXXXXX_XXXXXX"
-    account_id: "XXXXXX-XXXXXX-XXXXXX"
+    table_id: "gcp_billing_export_resource_v1_01E9C5_E0B654_4D2CB0"
+    account_id: "01E9C5-E0B654-4D2CB0"
 
 dashboard:
-  title: "Enterprise AI Governance"
-  subtitle: "AI Governance & Agent Platform Control Center"
+  title: "LG Energy Solution"
+  subtitle: "AI Governance & Agent Platform Dashboard"
   logo_path: "/lg_logo.png"
   default_days: 7
