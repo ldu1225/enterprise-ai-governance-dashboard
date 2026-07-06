@@ -1189,7 +1189,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
     def handle_service_account_tokens(self, s_dt=None, e_dt=None):
         client, _ = get_bq_client_and_token()
 
-        # Pure Authentic Real-time Query (Zero Mocking, Zero Manual Fake Rows)
+        # 100% Pure Dynamic BigQuery Correlation Query (Zero Email Hardcoding, Zero Manual Rows)
         sql = f"""
         WITH billing_llm AS (
           SELECT 
@@ -1226,17 +1226,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         FROM sa_audit s
         CROSS JOIN tot_sa_calls t
         CROSS JOIN billing_llm b
-        
-        UNION ALL
-
-        SELECT 
-          'lges-llm-app-sa@duleetest.iam.gserviceaccount.com' AS service_account,
-          'Claude Opus 4.8' AS used_model,
-          1 AS call_count,
-          540 AS exact_tokens,
-          0.0177 AS exact_cost
-
-        ORDER BY (service_account LIKE '%lges-llm-app-sa%') DESC, exact_cost DESC
+        ORDER BY exact_cost DESC
         LIMIT 20
         """
         try:
@@ -1247,10 +1237,8 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 sa = r['service_account']
                 model_name = str(r['used_model'])
                 tot_tok = int(r['exact_tokens'] or 0)
-                p_tok = int(tot_tok * 0.7) if tot_tok > 0 else 380
-                o_tok = int(tot_tok * 0.3) if tot_tok > 0 else 160
-                if tot_tok == 540:
-                    p_tok, o_tok = 380, 160
+                p_tok = int(tot_tok * 0.7)
+                o_tok = int(tot_tok * 0.3)
                 cost_val = float(r['exact_cost'] or 0.0)
 
                 result.append({
@@ -1265,7 +1253,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
             self.send_json(result)
         except Exception as e:
-            print("Real service account tokens query error:", e)
+            print("100% Pure Dynamic SA query error:", e)
             self.send_json([])
 
     def handle_agent_registry_all(self, s_dt=None, e_dt=None):
