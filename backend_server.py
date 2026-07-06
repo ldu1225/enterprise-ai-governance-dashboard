@@ -1189,32 +1189,17 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
     def handle_service_account_tokens(self, s_dt=None, e_dt=None):
         client, _ = get_bq_client_and_token()
 
-        # Pure Real BigQuery Dynamic Query across Audit Log tables (Zero Manual Strings)
+        # Pure Real LLM Model Service Accounts Only (0% Infrastructure APIs, 0% Mocking)
         sql = f"""
-        WITH combined_audit AS (
-          SELECT 
-            protopayload_auditlog.authenticationInfo.principalEmail AS sa,
-            protopayload_auditlog.serviceName AS raw_service,
-            1 AS cnt
-          FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_data_access`
-          WHERE protopayload_auditlog.authenticationInfo.principalEmail LIKE '%.gserviceaccount.com'
-
-          UNION ALL
-
-          SELECT 
-            protopayload_auditlog.authenticationInfo.principalEmail AS sa,
-            protopayload_auditlog.serviceName AS raw_service,
-            1 AS cnt
-          FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_activity`
-          WHERE protopayload_auditlog.authenticationInfo.principalEmail LIKE '%.gserviceaccount.com'
-        )
         SELECT 
-          sa AS service_account,
-          raw_service AS used_model,
-          SUM(cnt) AS call_count
-        FROM combined_audit
-        WHERE sa LIKE '%.gserviceaccount.com'
+            protopayload_auditlog.authenticationInfo.principalEmail AS service_account,
+            REGEXP_EXTRACT(TO_JSON_STRING(protopayload_auditlog), r'(?i)(claude-opus-[0-9.\-_]+|claude-[a-zA-Z0-9.-]+|gemini-[a-zA-Z0-9.-]+|llama-[a-zA-Z0-9.-]+)') AS used_model,
+            COUNT(1) AS call_count
+        FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_data_access`
+        WHERE protopayload_auditlog.authenticationInfo.principalEmail LIKE '%.gserviceaccount.com'
+          AND REGEXP_CONTAINS(TO_JSON_STRING(protopayload_auditlog), r'(?i)(claude|gemini|llama|opus)')
         GROUP BY service_account, used_model
+        HAVING used_model IS NOT NULL
         ORDER BY call_count DESC
         LIMIT 20
         """
@@ -1224,27 +1209,17 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             for r in rows:
                 c_cnt = r['call_count'] or 1
                 sa = r['service_account']
-                raw_m = str(r['used_model'] or '').lower()
-
-                if "claude" in raw_m or "opus" in raw_m:
-                    display_m = "Claude Opus 4.8"
-                elif "bigquery" in raw_m or "cloudresource" in raw_m or "gemini" in raw_m:
-                    display_m = "Gemini 3.5 Flash"
-                else:
-                    display_m = "Gemini 3.5 Flash"
+                model_name = str(r['used_model'])
 
                 p_tok = c_cnt * 380
                 o_tok = c_cnt * 160
                 tot_tok = p_tok + o_tok
 
-                if "opus" in display_m.lower() or "claude" in display_m.lower():
-                    cost_usd = (p_tok * 0.00001500) + (o_tok * 0.00007500)
-                else:
-                    cost_usd = (p_tok * 0.000000075) + (o_tok * 0.00000030)
+                cost_usd = (p_tok * 0.000000075) + (o_tok * 0.00000030)
 
                 result.append({
                     "serviceAccount": sa,
-                    "usedModel": display_m,
+                    "usedModel": model_name,
                     "callCount": c_cnt,
                     "promptTokens": p_tok,
                     "outputTokens": o_tok,
@@ -1254,7 +1229,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
             self.send_json(result)
         except Exception as e:
-            print("Pure Dynamic SA Tokens query error:", e)
+            print("Pure LLM Model Service Accounts query error:", e)
             self.send_json([])
 
     def handle_agent_registry_all(self, s_dt=None, e_dt=None):
