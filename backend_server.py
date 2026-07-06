@@ -1125,9 +1125,9 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             protopayload_auditlog.authenticationInfo.principalEmail AS email,
             COUNT(1) as created_count,
             ARRAY_AGG(DISTINCT COALESCE(
-              JSON_EXTRACT_SCALAR(TO_JSON_STRING(protopayload_auditlog.request), '$.reasoningEngine.displayName'),
-              JSON_EXTRACT_SCALAR(TO_JSON_STRING(protopayload_auditlog.response), '$.displayName'),
-              REGEXP_EXTRACT(protopayload_auditlog.resourceName, r'/reasoningEngines/(\d+)'),
+              REGEXP_EXTRACT(protopayload_auditlog.resourceName, r'/reasoningEngines/([^/]+)'),
+              REGEXP_EXTRACT(protopayload_auditlog.resourceName, r'/agents/([^/]+)'),
+              REGEXP_EXTRACT(protopayload_auditlog.resourceName, r'/locations/[^/]+/([^/]+)'),
               'LGES AI Agent'
             ) IGNORE NULLS) as created_agents
         FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_activity`
@@ -1135,10 +1135,6 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
           AND protopayload_auditlog.authenticationInfo.principalEmail IS NOT NULL
           AND protopayload_auditlog.authenticationInfo.principalEmail LIKE '%@%'
           AND protopayload_auditlog.authenticationInfo.principalEmail NOT LIKE '%.gserviceaccount.com'
-          AND (
-            protopayload_auditlog.methodName LIKE '%Create%'
-            OR protopayload_auditlog.methodName LIKE '%Deploy%'
-          )
         GROUP BY email
         ORDER BY created_count DESC
         LIMIT 5
