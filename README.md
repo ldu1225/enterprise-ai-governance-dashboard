@@ -1,7 +1,7 @@
 # 🛡️ Enterprise AI Governance & Agent Platform Dashboard
 
 > **엔터프라이즈 통합 AI 거버넌스, 과금 추적 및 AI 챗봇 관제 플랫폼 마스터 가이드**
-> **GCP Cloud Run 라이브 URL**: https://your-dashboard-service-hash.run.app
+
 
 ---
 
