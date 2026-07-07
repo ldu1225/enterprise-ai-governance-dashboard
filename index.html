@@ -1479,11 +1479,11 @@
 
       currentData.modelArmorLogs.forEach(log => {
         const tr = document.createElement('tr');
-        const c_warn = log.csam === 'MATCH_FOUND';
-        const p_warn = log.piJailbreak === 'MATCH_FOUND';
-        const r_warn = log.rai === 'MATCH_FOUND';
-        const s_warn = log.sdp === 'MATCH_FOUND';
-        const u_warn = log.maliciousUri === 'MATCH_FOUND';
+        const c_warn = log.csam && log.csam.includes('MATCH_FOUND');
+        const p_warn = log.piJailbreak && log.piJailbreak.includes('MATCH_FOUND');
+        const r_warn = log.rai && log.rai.includes('MATCH_FOUND');
+        const s_warn = log.sdp && log.sdp.includes('MATCH_FOUND');
+        const u_warn = log.maliciousUri && log.maliciousUri.includes('MATCH_FOUND');
 
         tr.innerHTML = `
           <td class="font-mono text-xs font-bold">${log.id}<br/><span class="text-stone-400 font-normal">${log.timestamp}</span></td>
@@ -1502,12 +1502,22 @@
             </div>
           </td>
           <td><span class="badge-crextio badge-red font-bold">${log.verdict}</span></td>
-          <td class="text-xs font-medium text-red-800 max-w-[150px] truncate" title="${log.verdict_reason}">${log.verdict_reason}</td>
-          <td><span class="badge-crextio ${c_warn ? 'badge-red' : 'badge-green'} font-bold">${log.csam === 'MATCH_FOUND' ? 'DETECT' : 'SAFE'}</span></td>
-          <td><span class="badge-crextio ${p_warn ? 'badge-red' : 'badge-green'} font-bold">${log.piJailbreak === 'MATCH_FOUND' ? 'DETECT' : 'SAFE'}</span></td>
-          <td><span class="badge-crextio ${r_warn ? 'badge-red' : 'badge-green'} font-bold">${log.rai === 'MATCH_FOUND' ? 'DETECT' : 'SAFE'}</span></td>
-          <td><span class="badge-crextio ${s_warn ? 'badge-red' : 'badge-green'} font-bold">${log.sdp === 'MATCH_FOUND' ? 'DETECT' : 'SAFE'}</span></td>
-          <td><span class="badge-crextio ${u_warn ? 'badge-red' : 'badge-green'} font-bold">${log.maliciousUri === 'MATCH_FOUND' ? 'DETECT' : 'SAFE'}</span></td>
+          <td class="text-xs font-medium text-red-800">
+            <div class="text-hover-container">
+              <span class="max-w-[150px] block truncate underline decoration-red-200 cursor-pointer" title="${log.verdict_reason}">
+                ${log.verdict_reason}
+              </span>
+              <div class="text-hover-popup">
+                <div class="font-bold text-amber-300 mb-1">🛡️ 상세 보안 정책 위반 사유 (Verdict Reason)</div>
+                ${log.verdict_reason}
+              </div>
+            </div>
+          </td>
+          <td><span class="badge-crextio ${c_warn ? 'badge-red' : 'badge-green'} font-bold">${c_warn ? 'DETECT' : 'SAFE'}</span></td>
+          <td><span class="badge-crextio ${p_warn ? 'badge-red' : 'badge-green'} font-bold">${p_warn ? 'DETECT' : 'SAFE'}</span></td>
+          <td><span class="badge-crextio ${r_warn ? 'badge-red' : 'badge-green'} font-bold">${r_warn ? 'DETECT' : 'SAFE'}</span></td>
+          <td><span class="badge-crextio ${s_warn ? 'badge-red' : 'badge-green'} font-bold">${s_warn ? 'DETECT' : 'SAFE'}</span></td>
+          <td><span class="badge-crextio ${u_warn ? 'badge-red' : 'badge-green'} font-bold">${u_warn ? 'DETECT' : 'SAFE'}</span></td>
         `;
         tbody.appendChild(tr);
       });
