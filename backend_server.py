@@ -34,11 +34,11 @@ def load_config():
     """config.yaml 파일에서 설정값을 읽어옵니다. (없거나 오류 시 기본값 적용)"""
     defaults = {
         "port": 8088,
-        "project_id": "duleetest",
-        "audit_dataset_id": "ge_analytics",
-        "billing_dataset_id": "billing_detailed_usage",
-        "billing_table_id": "gcp_billing_export_resource_v1_01E9C5_E0B654_4D2CB0",
-        "billing_account_id": "01E9C5-E0B654-4D2CB0",
+        "project_id": "",
+        "audit_dataset_id": "",
+        "billing_dataset_id": "",
+        "billing_table_id": "",
+        "billing_account_id": "",
         "cache_ttl": 600
     }
     if not os.path.exists(CONFIG_FILE):
@@ -80,8 +80,8 @@ def load_config():
 SYS_CONFIG = load_config()
 
 PORT = int(os.environ.get("PORT", SYS_CONFIG.get("port", 8088)))
-PROJECT_ID = os.environ.get("PROJECT_ID", SYS_CONFIG.get("project_id", "duleetest"))
-DATASET_ID = os.environ.get("AUDIT_DATASET_ID", SYS_CONFIG.get("audit_dataset_id", "ge_analytics"))
+PROJECT_ID = os.environ.get("PROJECT_ID", SYS_CONFIG.get("project_id", ""))
+DATASET_ID = os.environ.get("AUDIT_DATASET_ID", SYS_CONFIG.get("audit_dataset_id", ""))
 BILLING_DATASET = os.environ.get("BILLING_DATASET_ID", SYS_CONFIG.get("billing_dataset_id", "billing_detailed_usage"))
 BILLING_TABLE = os.environ.get("BILLING_TABLE_ID", SYS_CONFIG.get("billing_table_id", "gcp_billing_export_resource_v1_01E9C5_E0B654_4D2CB0"))
 BILLING_ACCOUNT_ID = os.environ.get("BILLING_ACCOUNT_ID", SYS_CONFIG.get("billing_account_id", "01E9C5-E0B654-4D2CB0"))
@@ -92,7 +92,8 @@ socketserver.TCPServer.allow_reuse_address = True
 CACHED_TOKEN = None
 TOKEN_EXPIRES_AT = 0
 QUERY_CACHE = {}
-CACHE_TTL = SYS_CONFIG.get("cache_ttl", 0)
+# Default cache TTL set to 10 seconds for instant real-time reactivity
+CACHE_TTL = 10
 
 def llm_group_skus_via_gemini(sku_list):
     """Dynamic LLM SKU Grouping function via Gemini API."""
@@ -178,7 +179,7 @@ DASHBOARD_VERSIONS = [
         "versionId": "v1.0.0",
         "title": "LGES 기본 관제 대시보드 (100% Pure BigQuery Billing Export DB Live)",
         "createdAt": "2026-07-02 09:00:00",
-        "author": "admin@dulee.altostrat.com",
+        "author": "user@company.com",
         "description": "gcp_billing_export_history 데이터 기반 SKU Group By 및 실시간 과금 감제",
         "widgets": []
     }
@@ -444,7 +445,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
             total_prompts = res1[0]['user_prompts'] if res1 else 0
             active_users = res_u[0]['active_users'] if res_u else 1
-            sum_cost_val = res_c[0]['sum_cost'] if res_c and res_c[0]['sum_cost'] else 383.52
+            sum_cost_val = res_c[0]['sum_cost'] if res_c and res_c[0]['sum_cost'] else 100.0
             armor_blocks = res_a[0]['block_cnt'] if res_a else 0
 
             data = {
@@ -460,7 +461,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json(data)
         except Exception as e:
             print("Error summary strict BQ:", e)
-            self.send_json({"activeUsers": 1, "totalPrompts": 0, "modelArmorBlocks": 0, "totalBillingSum": "$383.52 USD"})
+            self.send_json({"activeUsers": 1, "totalPrompts": 0, "modelArmorBlocks": 0, "totalBillingSum": "$100.00 USD"})
 
     def handle_llm_sku_category_timeline(self, s_dt=None, e_dt=None, step_days=1, days=7):
         client, _ = get_bq_client_and_token()
@@ -676,7 +677,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                         "date": label,
                         "costUsd": block_sum,
                         "spikePct": max_spike_pct if max_spike_pct > 0 else 55.2,
-                        "primaryDriver": "Claude Sonnet 4.5 & Vertex AI Search API 호출 급증",
+                        "primaryDriver": "LLM API 호출 급증",
                         "checkpoints": [
                             "⚠️ 특정 대용량 LLM 배치 처리 작업 또는 백그라운드 인덱싱 작업 실행 여부 확인",
                             "⚠️ GCP Billing Budget Alert 초과 알림 수신 및 프로젝트 쿼터(Quota) 한도 설정 점검",
@@ -707,7 +708,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json(result)
         except Exception as e:
             print("BQ Billing history cost spikes error:", e)
-            self.send_json({"billingAccount": BILLING_ACCOUNT_ID, "totalCostPeriod": 383.52, "skuBreakdown": [], "timeline": [], "spikeReports": []})
+            self.send_json({"billingAccount": BILLING_ACCOUNT_ID, "totalCostPeriod": 100.0, "skuBreakdown": [], "timeline": [], "spikeReports": []})
 
     # 🔒 EXACT BQ MODEL ARMOR LOGS (PULLS REAL BQ RECORDS MATCHING VERDICT BLOCK AND DATE FILTER)
     def handle_model_armor_exact_sql(self, s_dt, e_dt):
@@ -768,11 +769,11 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 logs.append({
                     "id": f"MA-BLOCK-{i+1:03d}",
                     "timestamp": str(r['timestamp'])[:19] if r['timestamp'] else "",
-                    "userEmail": "admin@dulee.altostrat.com",
+                    "userEmail": "user@company.com",
                     "operation_type": r['operation_type'] or "SANITIZE_USER_PROMPT",
                     "input_text": txt,
                     "verdict": "MODEL_ARMOR_SANITIZATION_VERDICT_BLOCK",
-                    "verdict_reason": r['verdict_reason'] or "Prompt blocked due to Model Armor security policy match.",
+                    "verdict_reason": r['verdict_reason'] or "Prompt blocked due to security policy match.",
                     "filter_match_state": r['filter_match_state'] or "MATCH_FOUND",
                     "pi_jailbreak_match_state": "MATCH_FOUND"
                 })
@@ -796,7 +797,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         sql_files_full = f"""
         SELECT 
             timestamp,
-            COALESCE(JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.user'), 'admin@dulee.altostrat.com') as bq_user,
+            COALESCE(JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.user'), 'user@company.com') as bq_user,
             JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.content.parts[1].text') as file_tag,
             JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.content.parts[2].text') as file_info
         FROM `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gen_ai_user_message`
@@ -814,7 +815,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             for r in rows:
                 tag = r['file_tag'] or ""
                 info = r['file_info'] or ""
-                user = r['bq_user'] or "admin@dulee.altostrat.com"
+                user = r['bq_user'] or "user@company.com"
 
                 fn_match = re.search(r'<start_of_user_uploaded_file:\s*([^>]+)>', tag)
                 filename = fn_match.group(1).strip() if fn_match else "업로드 문서"
@@ -825,23 +826,14 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
                 mime_match = re.search(r'mime type:\s*([^\s]+)', info)
                 mime_type = mime_match.group(1).strip() if mime_match else "application/pdf"
-
-                file_size = "1.8 MB"
-                summary = "문서 인덱싱 및 텍스트 벡터화 완료"
-                sec_flag = "🟢 일반 텍스트 파일"
-
+                
+                summary = info if info else "문서 인덱싱 완료"
+                file_size = "-"
+                
                 if "pdf" in filename.lower():
-                    file_size = "2.4 MB"
-                    summary = "LGES enterprise 라이선스 배분 및 차세대 AI 구축 전략 보고서"
                     sec_flag = "⚠️ 보안검토 권고 (내부 문서)"
-                elif "json" in filename.lower():
-                    file_size = "450 KB"
-                    summary = "시스템 업로드 테스트 설정 및 JSON 데이터"
+                else:
                     sec_flag = "🟢 일반 파일"
-                elif "png" in filename.lower() or "jpg" in filename.lower():
-                    file_size = "820 KB"
-                    summary = "아키텍처 스크린샷 이미지 데이터"
-                    sec_flag = "🟢 일반 이미지"
 
                 real_ts = str(r['timestamp'])[:19]
 
@@ -893,7 +885,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                         if days_idle >= 14:
                             recommendation = "🔴 폐기 권고 (Deprecate)" if days_idle >= 50 else "🟡 휴면 관찰 (Idle Warning)"
                             d_name = e.get('displayName') or f"Engine-{re_id[:8]}"
-                            d_desc = e.get('description') or f"{d_name} - ADK Managed Platform Runtime Engine"
+                            d_desc = e.get('description') or f"{d_name} - Platform Runtime Engine"
                             agent_identity = e.get('spec', {}).get('effectiveIdentity') or e.get('spec', {}).get('agentIdentity') or e.get('serviceAccount') or "-"
                             zombies.append({
                                 "agentId": f"reasoningEngines.{re_id}",
@@ -912,36 +904,44 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         QUERY_CACHE[cache_key] = {'data': zombies, 'ts': now}
         self.send_json(zombies)
 
-    # 📊 DYNAMIC DAILY AGENT USAGE FROM PURE BQ AUDIT LOGS
     # 📊 DYNAMIC DAILY AGENT USAGE (PER-AGENT AUDIT LOG CALLS & SORTED BY CALL COUNT DESC)
     def handle_agent_usage_daily(self, s_dt, e_dt, step_days=1):
-        cache_key = f"agent_usage_sorted_desc_{s_dt}_{e_dt}_{step_days}"
+        cache_key = f"agent_usage_daily_strict_{s_dt}_{e_dt}_{step_days}"
         now = time.time()
         if cache_key in QUERY_CACHE and (now - QUERY_CACHE[cache_key]['ts']) < CACHE_TTL:
             self.send_json(QUERY_CACHE[cache_key]['data'])
             return
 
-        client, _ = get_bq_client_and_token()
+        client, token = get_bq_client_and_token()
         where_clause = build_where_clause(s_dt, e_dt, "timestamp")
 
-        # Query exact per-agent calls from cloudaudit activity table
+        # Query dynamic per-agent names and call counts directly from user_activity logs
         sql_usage = f"""
-        SELECT 
+        WITH parsed_activity AS (
+          SELECT 
             DATE(timestamp) as log_date,
-            protopayload_auditlog.resourceName as resource_name,
-            COUNT(1) as call_count
-        FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_activity`
-        {where_clause}
-          AND protopayload_auditlog.resourceName IS NOT NULL
-          AND (
-            protopayload_auditlog.resourceName LIKE '%reasoningEngines%'
-            OR protopayload_auditlog.resourceName LIKE '%agents%'
-            OR protopayload_auditlog.resourceName LIKE '%assistants%'
-            OR protopayload_auditlog.resourceName LIKE '%engines%'
-          )
-          AND NOT (protopayload_auditlog.resourceName LIKE '%datasets%')
-          AND NOT (protopayload_auditlog.resourceName LIKE '%tables%')
-        GROUP BY log_date, resource_name
+            COALESCE(
+              JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.request.userevent.agentspaceinfo.agentinfo.agentid'),
+              REGEXP_EXTRACT(JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.response.name'), r'agents/([^/]+)'),
+              REGEXP_EXTRACT(JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.logmetadata.name'), r'assistants/([^/]+)'),
+              'default_assistant'
+            ) AS agent_id,
+            COALESCE(
+              JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.request.userevent.agentspaceinfo.agentinfo.name'),
+              JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.response.displayname'),
+              'Default Assistant'
+            ) AS agent_name
+          FROM `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity`
+          {where_clause}
+            AND jsonPayload IS NOT NULL
+        )
+        SELECT 
+          log_date,
+          agent_id,
+          agent_name,
+          COUNT(1) as call_count
+        FROM parsed_activity
+        GROUP BY 1, 2, 3
         ORDER BY log_date ASC
         """
 
@@ -950,47 +950,20 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         try:
             rows = list(client.query(sql_usage).result())
             
-            # Specific sub-agents MUST be checked BEFORE default_assistant
-            res_to_title_ordered = [
-                ("agents/13009754293607051313", "LG ES 배터리 셀 스마트 분석 AI"),
-                ("agents/6673497109655681244", "LGENSOL ADK AGENT V6 (MI 전략팀)"),
-                ("agents/17673563980374852065", "LG Energy Solution BQ Audit Logs Agent"),
-                ("agents/12509495917458732526", "LGES 쇼핑 & 자재 어시스턴트"),
-                ("agents/9056001855206643175", "전극 공정 수율 최적화 분석 에이전트"),
-                ("agents/18099188549180822270", "화학물질 안전보건 규제 검색 보조"),
-                ("agents/17247206161582633483", "Google Workspace Add-on Agent"),
-                ("agents/1877554892001731136", "LGES 공정 매뉴얼 검색 에이전트"),
-                ("agents/15871407839679424764", "배터리 원자재 시세 예측 보조"),
-                ("agents/370689038194802525", "글로벌 공급망 리스크 탐지 에이전트"),
-                ("assistants/default_assistant", "Gemini Enterprise Default Assistant")
-            ]
-
             detected_agents = {}
             usage_by_date = {}
             agent_total_calls = {}
 
             for r in rows:
                 d_str = str(r['log_date'])
-                res = r['resource_name']
+                a_id = r['agent_id'].lower().replace(' ', '-').replace('&', 'and')
+                agent_title = r['agent_name']
                 cnt = r['call_count']
 
-                agent_title = None
-                for k, v in res_to_title_ordered:
-                    if k in res:
-                        agent_title = v
-                        break
-                
-                if not agent_title:
-                    if "reasoningengines" in res.lower() or "agents" in res.lower():
-                        parts = res.split('/')
-                        agent_title = f"Agent ({parts[-1][:12]}...)"
-                    elif "engines" in res.lower():
-                        agent_title = "Gemini Enterprise Search Engine"
-                    else:
-                        agent_title = "Google Workspace Add-on Agent"
+                # Normalize names (e.g. if name is empty, fallback to id)
+                if not agent_title or agent_title == 'nan':
+                    agent_title = f"Agent ({a_id[:12]})"
 
-                a_id = agent_title.lower().replace(' ', '-').replace('&', 'and')
-                
                 if a_id not in detected_agents:
                     detected_agents[a_id] = {"id": a_id, "name": agent_title}
 
@@ -1093,12 +1066,12 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             rows = list(client.query(sql_heavy).result())
             result = [{"email": r['email'], "activity_count": r['activity_count']} for r in rows if r['email']]
             if not result:
-                result = [{"email": "admin@dulee.altostrat.com", "activity_count": 86}]
+                result = [{"email": "user@company.com", "activity_count": 86}]
             QUERY_CACHE[cache_key] = {'data': result, 'ts': now}
             self.send_json(result)
         except Exception as e:
             print("Audit heavy users strict email error:", e)
-            self.send_json([{"email": "admin@dulee.altostrat.com", "activity_count": 86}])
+            self.send_json([{"email": "user@company.com", "activity_count": 86}])
 
     def handle_agent_creation_timeline(self, s_dt, e_dt, step_days=1):
         cache_key = f"agent_creation_{s_dt}_{e_dt}_{step_days}"
@@ -1311,36 +1284,31 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
     def handle_notebooklm_metrics(self, s_dt=None, e_dt=None):
         client, token = get_bq_client_and_token()
 
-        # 1. Fetch REAL Live Workbench Instances directly via GCP Vertex AI REST API (Pure Raw GET List Length)
+        # 1. Fetch REAL Live Active NotebookLM unique notebooks directly via CloudAudit
         notebook_count = 0
-        if token:
-            for loc in ['us-central1', 'asia-northeast3', '-']:
-                try:
-                    url_nb = f"https://notebooks.googleapis.com/v1/projects/{PROJECT_ID}/locations/{loc}/instances"
-                    req_nb = urllib.request.Request(url_nb, headers={
-                        'Authorization': f'Bearer {token}',
-                        'Accept': 'application/json'
-                    })
-                    with urllib.request.urlopen(req_nb, timeout=5) as resp_nb:
-                        data_nb = json.loads(resp_nb.read().decode('utf-8'))
-                        instances = data_nb.get('instances', [])
-                        notebook_count = len(instances)  # Pure Raw GET List Length
-                        if instances:
-                            break
-                except Exception as e_api:
-                    print(f"Vertex AI Workbench REST API Call ({loc}) info:", e_api)
- 
+        try:
+            sql_engines = f"""
+            SELECT COUNT(DISTINCT REGEXP_EXTRACT(protopayload_auditlog.resourceName, r'notebooks/([^/]+)')) AS cnt
+            FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_data_access`
+            WHERE protopayload_auditlog.resourceName LIKE '%/notebooks/%'
+            """
+            rows_e = list(client.query(sql_engines).result())
+            if rows_e and rows_e[0] and rows_e[0]['cnt']:
+                notebook_count = rows_e[0]['cnt']
+        except Exception as e_e:
+            print("NotebookLM notebooks count query info:", e_e)
 
-        # 2. Strict Filter for REAL PURE NotebookLM Prompts from CloudAudit (Zero DiscoveryEngine Mixup)
+        # 2. Strict Filter for NotebookLM Prompts (Pure User Submissions) within the date range
         where_stmt = build_where_clause(s_dt, e_dt, "timestamp")
         
         sql_prompts = f"""
         SELECT 
-          COUNT(1) AS total_prompts,
+          COUNT(DISTINCT protopayload_auditlog.resourceName || protopayload_auditlog.authenticationInfo.principalEmail || CAST(timestamp AS STRING)) AS total_prompts,
           COUNT(DISTINCT protopayload_auditlog.authenticationInfo.principalEmail) AS active_users
         FROM `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_data_access`
         {where_stmt}
-          AND LOWER(protopayload_auditlog.serviceName) LIKE '%notebook%'
+          AND protopayload_auditlog.serviceName = 'discoveryengine.googleapis.com'
+          AND protopayload_auditlog.methodName = 'google.cloud.notebooklm.v1main.NotebookService.GenerateFreeFormStreamed'
           AND protopayload_auditlog.authenticationInfo.principalEmail LIKE '%@%'
           AND protopayload_auditlog.authenticationInfo.principalEmail NOT LIKE '%gserviceaccount.com%'
         """
@@ -1500,7 +1468,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             "versionId": f"v1.{v_num}.0",
             "title": title,
             "createdAt": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "author": "admin@dulee.altostrat.com",
+            "author": "user@company.com",
             "description": f"커스텀 메트릭 {len(widgets)}개 스키마",
             "widgets": widgets
         }
@@ -1532,7 +1500,7 @@ You have 100% COMPLETE AUTHORITATIVE ACCESS to ALL 6 BigQuery Datasets used acro
    - EXACT Model Armor SQL query for blocked user prompts:
      SELECT 
        timestamp, 
-       'admin@dulee.altostrat.com' AS User_Email,
+       'user@company.com' AS User_Email,
        COALESCE(jsonpayload_v1_sanitizeoperationlogentry.sanitizationinput.text, JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.sanitizationInput.text'), '국가핵심기술 알려줘') AS Blocked_User_Prompt,
        COALESCE(jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.sanitizationverdictreason, JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.sanitizationResult.sanitizationVerdictReason'), 'PI_JAILBREAK_MATCH') AS Block_Reason
      FROM `{PROJECT_ID}.{DATASET_ID}.modelarmor_googleapis_com_sanitize_operations`
