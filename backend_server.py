@@ -86,6 +86,9 @@ BILLING_DATASET = os.environ.get("BILLING_DATASET_ID", SYS_CONFIG.get("billing_d
 BILLING_TABLE = os.environ.get("BILLING_TABLE_ID", SYS_CONFIG.get("billing_table_id", "gcp_billing_export_resource_v1_01E9C5_E0B654_4D2CB0"))
 BILLING_ACCOUNT_ID = os.environ.get("BILLING_ACCOUNT_ID", SYS_CONFIG.get("billing_account_id", "01E9C5-E0B654-4D2CB0"))
 
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@lges.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "lges1234!")
+
 socketserver.TCPServer.allow_reuse_address = True
 
 # 글로벌 토큰 및 성능 최적화 캐시
@@ -340,13 +343,33 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         except:
             payload = {}
 
-        if path == "/api/dashboard/versions":
+        if path == "/api/auth/login":
+            self.handle_auth_login(payload)
+        elif path == "/api/dashboard/versions":
             self.handle_save_version(payload)
         elif path == "/api/chat":
             self.handle_conversational_analytics_chat(payload)
         else:
             self.send_response(404)
             self.end_headers()
+
+    def handle_auth_login(self, payload):
+        email = payload.get("email", "").strip()
+        password = payload.get("password", "").strip()
+
+        if email == ADMIN_EMAIL and password == ADMIN_PASSWORD:
+            print(f"🔑 [Login Success] Branded Portal authenticated for user: {email}")
+            self.send_json({
+                "success": True,
+                "message": "로그인 성공",
+                "userEmail": email
+            })
+        else:
+            print(f"⚠️ [Login Failure] Failed authentication attempt. Email: {email}")
+            self.send_json({
+                "success": False,
+                "message": "이메일 또는 비밀번호가 올바르지 않습니다."
+            })
 
     def handle_summary_official_bq(self, s_dt, e_dt):
         cache_key = f"summary_strict_block_{s_dt}_{e_dt}"
