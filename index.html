@@ -649,7 +649,7 @@
           </div>
 
           <div class="pt-3 border-t border-stone-100 text-[11px] text-stone-400 flex justify-between font-medium">
-            <span id="billing-account-text">Account: 01E9C5-E0B654</span>
+            <span id="billing-account-text">Account: -</span>
             <span>Dynamic Date & Project Synced</span>
           </div>
         </div>
@@ -784,6 +784,13 @@
         if (config.subtitle) {
           const subtitleEl = document.getElementById('dashboard-subtitle');
           if (subtitleEl) subtitleEl.innerText = config.subtitle;
+        }
+        if (config.billing_account_id) {
+          const billingAccountEl = document.getElementById('billing-account-text');
+          if (billingAccountEl) {
+            // 앞 6자리만 노출 처리하거나 전체 노출
+            billingAccountEl.innerText = `Account: ${config.billing_account_id}`;
+          }
         }
       } catch (err) {
         console.error("Config load error:", err);

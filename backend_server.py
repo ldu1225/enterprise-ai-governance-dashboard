@@ -124,8 +124,8 @@ PORT = int(os.environ.get("PORT", SYS_CONFIG.get("port", 8088)))
 PROJECT_ID = os.environ.get("PROJECT_ID", SYS_CONFIG.get("project_id", ""))
 DATASET_ID = os.environ.get("AUDIT_DATASET_ID", SYS_CONFIG.get("audit_dataset_id", ""))
 BILLING_DATASET = os.environ.get("BILLING_DATASET_ID", SYS_CONFIG.get("billing_dataset_id", "billing_detailed_usage"))
-BILLING_TABLE = os.environ.get("BILLING_TABLE_ID", SYS_CONFIG.get("billing_table_id", "gcp_billing_export_resource_v1_01E9C5_E0B654_4D2CB0"))
-BILLING_ACCOUNT_ID = os.environ.get("BILLING_ACCOUNT_ID", SYS_CONFIG.get("billing_account_id", "01E9C5-E0B654-4D2CB0"))
+BILLING_TABLE = os.environ.get("BILLING_TABLE_ID", SYS_CONFIG.get("billing_table_id", "gcp_billing_export_resource_v1_your_billing_account"))
+BILLING_ACCOUNT_ID = os.environ.get("BILLING_ACCOUNT_ID", SYS_CONFIG.get("billing_account_id", "your-billing-account-id"))
 
 socketserver.TCPServer.allow_reuse_address = True
 
@@ -1259,7 +1259,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                     })
             if not result:
                 result = [{
-                    "email": "admin@dulee.altostrat.com",
+                    "email": "user@company.com",
                     "created_count": len(real_agent_names),
                     "created_agents": real_agent_names
                 }]
@@ -1268,7 +1268,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print("Audit agent creators query error:", e)
             self.send_json([{
-                "email": "admin@dulee.altostrat.com",
+                "email": "user@company.com",
                 "created_count": 6,
                 "created_agents": ["NEWSPAPER_AGENT", "REASONING_ENGINE_POC", "ADK_ASSISTANT_V2", "FINANCE_ANALYST_AGENT", "HR_HELPER_BOT", "LOGISTICS_OPTIMIZER"]
             }])
