@@ -1715,7 +1715,20 @@ CRITICAL INSTRUCTIONS FOR SQL GENERATION:
                 "tableRows": [["Execution Error"]]
             })
 
+    def get_authenticated_user(self):
+        """IAP가 주입한 x-goog-authenticated-user-email 헤더에서 유저 이메일을 동적 추출합니다."""
+        iap_user = self.headers.get("x-goog-authenticated-user-email")
+        if iap_user:
+            if ":" in iap_user:
+                return iap_user.split(":")[-1].strip()
+            return iap_user.strip()
+        return "user@company.com"
+
     def send_json(self, data):
+        # IAP 로그인 사용자 디버깅용 터미널 로그 출력
+        user = self.get_authenticated_user()
+        if user != "user@company.com":
+             print(f"🔒 [IAP Security Audit] User '{user}' requested API: {self.path}")
         self.send_response(200)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.end_headers()
