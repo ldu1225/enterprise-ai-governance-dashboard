@@ -112,7 +112,7 @@ graph TD
 ### 2️⃣ [Step 2] config.yaml 환경 설정 튜닝 (Dashboard Configuration)
 프로젝트 환경에 맞게 Single Source of Truth 설정 파일을 작성합니다.
 1. 프로젝트 루트의 `config.yaml` 파일을 엽니다.
-2. 아래 주요 항목에 [Step 1]에서 생성 및 확인한 실측 GCP 자원 정보들을 정확하게 기입합니다:
+2. 아래 주요 항목에 [Step 1]에서 생성 및 확인한 실측 GCP 자원 정보 및 대시보드 브랜드 타이틀을 입력합니다:
    ```yaml
    gcp:
      project_id: "your-gcp-project-id"           # 대시보드를 띄울 GCP 프로젝트 ID
@@ -121,6 +121,12 @@ graph TD
        dataset_id: "your_billing_dataset_id"     # 빌링 빅쿼리 데이터셋 (E.g. billing_detailed_usage)
        table_id: "your_billing_table_id"         # gcp_billing_export_resource_v1_XXXXXX
        account_id: "your-billing-account-id"     # 결제 계정 ID (E.g. 01E9C5-XXXXXX)
+
+   dashboard:
+     title: "LG Energy Solution"                 # 대시보드 및 AI 챗봇의 주 타이틀 명칭
+     subtitle: "AI Governance & Agent Platform Dashboard" # 대시보드 부 타이틀 명칭
+     logo_path: "/lg_logo.png"                   # 커스텀 로고 이미지 경로 (favicon 자동 지정)
+     default_days: 7                             # 초기 데이터 조회 기간 (일 단위)
    ```
 
 ---
