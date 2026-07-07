@@ -117,52 +117,66 @@ Vertex AI Agent, Cloud Audit, Model Armor 보안 차단 기록 로그를 BigQuer
 
 ---
 
-## 🛠️ 5. 빠른 시작 및 로컬 구동 (Quick Start & Local Running)
+## 🛠️ 5. 단계별 빌드 및 배포 마스터 가이드 (Step-by-Step Deployment Guide)
 
-### 5.1 환경 설정 및 의존성 설치
-```bash
-# 레포지토리 클론
-git clone https://github.com/your-username/your-repository-name.git
-cd your-repository-name
+고객사 환경에 플랫폼을 구축 및 빌드하기 위한 5단계 표준 흐름입니다. 아래 단계를 순서대로 빠짐없이 진행하십시오.
 
-# Python virtual environment 생성 및 활성화
-python3 -m venv venv
-source venv/bin/activate
+### 1️⃣ [Step 1] GCP Infrastructure Setup (구글 클라우드 사전 인프라 구성)
+대시보드 구동의 기초가 되는 빅쿼리 과금 스트리밍 및 감사 로그 수집 싱크를 준비합니다.
+1. **GCP Billing Export 활성화**: 결제 콘솔 내 'Billing Export' 메뉴에서 'Detailed Cost Export'를 활성화하고 빅쿼리 데이터셋을 연결합니다. (생성된 `gcp_billing_export_resource_v1_{ACCOUNT_ID}` 테이블명 확인)
+2. **Log Router 감사 로그 싱크 구성**: Logging 콘솔의 'Log Router'에서 빅쿼리 적재 싱크를 만들고 본 문서 **2.2절의 로그 인클루전 필터 쿼리**를 주입하여 `ge_analytics` 등의 데이터셋에 로그가 자동 적재되도록 설정합니다.
 
-# 의존성 패키지 설치
-pip install google-cloud-bigquery google-genai pyyaml
-```
+### 2️⃣ [Step 2] config.yaml 환경설정 튜닝 (Dashboard Configuration)
+프로젝트 환경에 맞게 Single Source of Truth 설정 파일을 작성합니다.
+1. 프로젝트 루트의 `config.yaml` 파일을 엽니다.
+2. 아래 주요 항목에 [Step 1]에서 확인한 실측 GCP 자원 정보들을 정확하게 기입합니다:
+   - `gcp.project_id`: "사용자의 실측 GCP 프로젝트 ID"
+   - `gcp.audit_dataset_id`: "감사 로그가 쌓이는 빅쿼리 데이터셋 ID"
+   - `gcp.billing.dataset_id`: "빌링 데이터셋 ID"
+   - `gcp.billing.table_id`: "gcp_billing_export_resource_v1_{BILLING_ACCOUNT_ID}"
+   - `gcp.billing.account_id`: "GCP 결제 계정 ID (E.g. 01E9C5-...)"
 
-### 5.2 백엔드 서버 로컬 구동 (포트 8088)
-```bash
-python3 backend_server.py
-```
-- 브라우저 접속: `http://localhost:8088/`
+### 3️⃣ [Step 3] GCP Local Authentication Setup (로컬 인증 토큰 바인딩)
+로컬 장비 및 서버에서 빅쿼리에 접근하기 위해 사용자 자격증명(ADC) 토큰을 인증합니다.
+1. 로컬 터미널에 GCP SDK(`gcloud`)가 설치되어 있는지 확인합니다.
+2. 아래 명령을 실행하여 브라우저 로그인을 완료하고 Application Default Credentials를 활성화합니다:
+   ```bash
+   gcloud auth application-default login
+   ```
+
+### 4️⃣ [Step 4] 로컬 가상환경 구성 및 개발 서버 구동 (Local Launching)
+로컬 샌드박스에서 대시보드 동작을 우선 빌드하고 기동합니다.
+1. 프로젝트 루트 경로로 이동하여 Python 가상환경을 활성화하고 의존성을 설치합니다:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install google-cloud-bigquery google-genai pyyaml
+   ```
+2. 아래 명령어로 다중 스레드 백엔드 관제 서버를 8088 포트로 즉시 기동합니다:
+   ```bash
+   python3 backend_server.py
+   ```
+3. 웹 브라우저를 열고 `http://localhost:8088/` 에 접속하여 실시간 AI 거버넌스 렌더링을 최종 확인합니다.
+
+### 5️⃣ [Step 5] GCP Cloud Run 프로덕션 컨테이너 빌드 & 배포 (Cloud Production Deploy)
+대시보드를 구글 클라우드 런(Serverless Cloud Run) 환경으로 완전 무중단 프로덕션 릴리즈합니다.
+1. 아래 2라인 쉘 커맨드를 차례대로 실행하여 로컬 ADC 토큰을 기반으로 소스코드를 GCP Artifact Registry에 컨테이너 이미지로 자동 원격 빌딩하고 배포합니다:
+   ```bash
+   TOKEN=$(gcloud auth application-default print-access-token)
+   CLOUDSDK_AUTH_ACCESS_TOKEN=$TOKEN gcloud run deploy ai-governance-dashboard \
+     --source . \
+     --region us-central1 \
+     --allow-unauthenticated \
+     --project "your-gcp-project-id"
+   ```
+2. 배포 완료 후 터미널에 출력되는 고유 **Service URL**(`https://your-dashboard-service-hash.run.app`)을 통해 전사 유저가 대시보드와 AI 팩트 체크 챗봇을 즉각 실시간 사용할 수 있게 됩니다!
 
 ---
 
-## 🚀 6. GCP Cloud Run 빌드 & 배포 가이드 (Deployment)
-
-본 프로젝트는 GCP Cloud Run 환경으로 자동 컨테이너 빌드 및 프로덕션 배포가 구성되어 있습니다.
-
-```bash
-# GCP ADC 로그인 및 배포 수행
-gcloud auth application-default login
-
-# Cloud Run 프로덕션 즉시 배포
-TOKEN=$(gcloud auth application-default print-access-token)
-CLOUDSDK_AUTH_ACCESS_TOKEN=$TOKEN gcloud run deploy ai-governance-dashboard \
-  --source . \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --project your-gcp-project-id
-```
-
----
-
-## 📄 7. 구성 파일 설명 (Project Structure)
+## 📄 6. 구성 파일 설명 (Project Structure)
 
 - `backend_server.py`: Python 기반 다중 스레드 HTTP REST 백엔드 서버 (BigQuery Integration & Gemini 3.5 Flash 2nd-Pass Fact Analyzer Engine)
 - `index.html`: 크렉스티오(Crextio) 엔터프라이즈 디자인 시스템 기반 프론트엔드 대시보드 & AI 챗봇 모달 UI
 - `config.yaml`: BigQuery 데이터셋, 프로젝트 ID, 쿼리 설정 튜닝 파일 (Single Source of Truth)
 - `Dockerfile`: Google Cloud Run 컨테이너 빌드 파일
+
