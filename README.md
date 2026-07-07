@@ -117,6 +117,60 @@ Vertex AI Agent, Cloud Audit, Model Armor 보안 차단 기록 로그를 BigQuer
    bq update --default_table_expiration 10368000 your-gcp-project-id:your_audit_dataset_id
    ```
 
+### 3.3 파이썬 스크립트를 통한 데이터셋 전체 테이블 보존 정책 일괄 주입 (Python SDK Automation - Optional)
+CLI 명령어 권한 오류가 나거나 여러 테이블을 한 번에 처리하고 싶을 때, 관리자가 로컬 가상환경에서 파이썬 스크립트를 활용해 데이터셋 내 전체 테이블의 만료일(예: 90일)을 안전하게 일괄 지정할 수 있는 옵셔널 자동화 스크립트입니다.
+
+1. **`set_retention.py`** 파일을 생성하고 아래 코드를 복사합니다 (GCP 프로젝트 및 데이터셋 ID는 템플릿 환경에 맞게 수정하십시오):
+   ```python
+   # set_retention.py
+   from google.cloud import bigquery
+   from google.auth import default
+   import datetime
+
+   # 1. GCP ADC 사용자 자격증명 로드
+   credentials, project = default()
+   
+   # 2. GCP Project ID 지정
+   client = bigquery.Client(credentials=credentials, project="your-gcp-project-id")
+
+   # 3. 보존 기한 설정 (90일)
+   EXPIRATION_MS = 90 * 24 * 60 * 60 * 1000  # 90일 (밀리초)
+   EXPIRATION_DELTA = datetime.timedelta(days=90)
+
+   # 4. 대상 데이터셋 목록
+   datasets = ["your_audit_dataset_id", "your_billing_dataset_id"]
+
+   for ds_name in datasets:
+       print(f"=== Processing Dataset: {ds_name} ===")
+       dataset_ref = client.dataset(ds_name)
+       
+       # 데이터셋 레벨 기본 테이블 만료일 지정 (90일)
+       dataset = client.get_dataset(dataset_ref)
+       dataset.default_table_expiration_ms = EXPIRATION_MS
+       client.update_dataset(dataset, ["default_table_expiration_ms"])
+       print(f"Dataset {ds_name} default expiration set to 90 days.")
+
+       # 데이터셋 내 모든 테이블 루프
+       tables = list(client.list_tables(dataset_ref))
+       for t in tables:
+           table = client.get_table(t.reference)
+           if table.time_partitioning:
+               # 파티션 테이블 ➡️ 파티션별 만료일 90일 지정
+               table.time_partitioning.expiration_ms = EXPIRATION_MS
+               client.update_table(table, ["time_partitioning"])
+               print(f"  -> Table {t.table_id} partition expiration set to 90 days.")
+           else:
+               # 비파티션 테이블 ➡️ 테이블 만료일 90일 지정 (오늘부터 90일 후 삭제)
+               table.expires = datetime.datetime.now(datetime.timezone.utc) + EXPIRATION_DELTA
+               client.update_table(table, ["expires"])
+               print(f"  -> Table {t.table_id} table expiration set to 90 days.")
+   ```
+2. 로컬 가상환경에서 아래와 같이 실행합니다:
+   ```bash
+   python3 set_retention.py
+   ```
+3. 실행 완료 시 두 데이터셋 내부의 모든 파티션 및 비파티션 테이블에 90일 만료 규칙이 100% 동적 주입됩니다.
+
 ---
 
 ## 🌟 4. 핵심 기능 및 엔터프라이즈 하이라이트 (Key Features)
