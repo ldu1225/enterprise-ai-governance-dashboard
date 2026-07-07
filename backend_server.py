@@ -406,14 +406,17 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         {where_billing}
         """
 
-        # Model Armor block count matching exact BQ logs with BLOCK verdict
+        # Model Armor block count matching exact BQ logs with BLOCK verdict and user link
+        where_clause_m = build_where_clause(s_dt, e_dt, "m.timestamp")
         q_armor = f"""
         SELECT COUNT(1) as block_cnt
-        FROM `{PROJECT_ID}.{DATASET_ID}.modelarmor_googleapis_com_sanitize_operations`
-        {where_clause}
+        FROM `{PROJECT_ID}.{DATASET_ID}.modelarmor_googleapis_com_sanitize_operations` m
+        INNER JOIN `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity` a
+          ON REGEXP_EXTRACT(m.labels.modelarmor_googleapis_com_client_correlation_id, r'\\|([^\\|]+)$') = a.jsonPayload.response.assistToken
+        {where_clause_m}
           AND (
-            jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.sanitizationverdict LIKE '%BLOCK%'
-            OR JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.sanitizationResult.sanitizationVerdict') LIKE '%BLOCK%'
+            m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.sanitizationverdict LIKE '%BLOCK%'
+            OR JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.sanitizationVerdict') LIKE '%BLOCK%'
           )
         """
 
@@ -728,6 +731,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
               a.jsonPayload.useriamprincipal,
               'user@company.com'
           ) as bq_user,
+          SPLIT(SPLIT(m.labels.modelarmor_googleapis_com_client_correlation_id, '|')[SAFE_OFFSET(1)], '/')[SAFE_OFFSET(7)] as app_name,
           COALESCE(
             m.jsonpayload_v1_sanitizeoperationlogentry.operationtype,
             JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.operationType')
@@ -746,13 +750,29 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.sanitizationVerdictReason')
           ) AS verdict_reason,
           COALESCE(
-            m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.filtermatchstate,
-            JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.filterMatchState')
-          ) AS filter_match_state
+             m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.filterresults.csam.csamfilterfilterresult.matchstate,
+             JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.filterResults.csam.csamFilterFilterResult.matchState')
+          ) as csam_res,
+          COALESCE(
+             m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.filterresults.pi_and_jailbreak.piandjailbreakfilterresult.matchstate,
+             JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.filterResults.pi_and_jailbreak.piAndJailbreakFilterResult.matchState')
+          ) as pi_jb_res,
+          COALESCE(
+             m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.filterresults.rai.raifilterresult.matchstate,
+             JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.filterResults.rai.raiFilterResult.matchState')
+          ) as rai_res,
+          COALESCE(
+             m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.filterresults.sdp.sdpfilterresult.inspectresult.matchstate,
+             JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.filterResults.sdp.sdpFilterResult.inspectResult.matchState')
+          ) as sdp_res,
+          COALESCE(
+             m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.filterresults.malicious_uris.maliciousurifilterresult.matchstate,
+             JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.filterResults.malicious_uris.maliciousUriFilterResult.matchState')
+          ) as uri_res
         FROM `{PROJECT_ID}.{DATASET_ID}.modelarmor_googleapis_com_sanitize_operations` m
-        CROSS JOIN `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity` a
+        INNER JOIN `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity` a
+          ON REGEXP_EXTRACT(m.labels.modelarmor_googleapis_com_client_correlation_id, r'\\|([^\\|]+)$') = a.jsonPayload.response.assistToken
         {where_clause_m}
-          AND ABS(TIMESTAMP_DIFF(m.timestamp, a.timestamp, SECOND)) < 5
           AND (
             m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.sanitizationverdict LIKE '%BLOCK%'
             OR JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.sanitizationVerdict') LIKE '%BLOCK%'
@@ -776,12 +796,16 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                     "id": f"MA-BLOCK-{i+1:03d}",
                     "timestamp": str(r['timestamp'])[:19] if r['timestamp'] else "",
                     "userEmail": r['bq_user'] or "user@company.com",
+                    "appName": r['app_name'] or "default_assistant",
                     "operation_type": r['operation_type'] or "SANITIZE_USER_PROMPT",
                     "input_text": txt,
                     "verdict": "MODEL_ARMOR_SANITIZATION_VERDICT_BLOCK",
                     "verdict_reason": r['verdict_reason'] or "Prompt blocked due to security policy match.",
-                    "filter_match_state": r['filter_match_state'] or "MATCH_FOUND",
-                    "pi_jailbreak_match_state": "MATCH_FOUND"
+                    "csam": r['csam_res'] or "NO_MATCH_FOUND",
+                    "piJailbreak": r['pi_jb_res'] or "NO_MATCH_FOUND",
+                    "rai": r['rai_res'] or "NO_MATCH_FOUND",
+                    "sdp": r['sdp_res'] or "NO_MATCH_FOUND",
+                    "maliciousUri": r['uri_res'] or "NO_MATCH_FOUND"
                 })
 
             QUERY_CACHE[cache_key] = {'data': logs, 'ts': now}

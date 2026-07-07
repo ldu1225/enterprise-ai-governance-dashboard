@@ -529,11 +529,16 @@
             <tr>
               <th>로그 ID / 일시</th>
               <th>시도 사용자 계정 (Who User)</th>
+              <th>대상 에이전트 (App/Agent)</th>
               <th>Sanitize 작업 유형</th>
               <th>입력 텍스트 (Input Text - Hover for Full Content)</th>
               <th>판정 (Verdict)</th>
               <th>차단 사유 (Verdict Reason)</th>
-              <th>PI / Jailbreak 상태</th>
+              <th>CSAM</th>
+              <th>PI/탈옥</th>
+              <th>RAI 위반</th>
+              <th>SDP 위반</th>
+              <th>악성 URI</th>
             </tr>
           </thead>
           <tbody id="armor-exact-table-body"></tbody>
@@ -1468,15 +1473,22 @@
       tbody.innerHTML = '';
 
       if (!currentData.modelArmorLogs || currentData.modelArmorLogs.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-stone-400 py-8 font-bold text-sm">선택된 관제 기간 내 Model Armor 차단/디텍션 기록이 없습니다. (BigQuery Real DB: 0건)</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12" class="text-center text-stone-400 py-8 font-bold text-sm">선택된 관제 기간 내 Model Armor 차단/디텍션 기록이 없습니다. (BigQuery Real DB: 0건)</td></tr>';
         return;
       }
 
       currentData.modelArmorLogs.forEach(log => {
         const tr = document.createElement('tr');
+        const c_warn = log.csam === 'MATCH_FOUND';
+        const p_warn = log.piJailbreak === 'MATCH_FOUND';
+        const r_warn = log.rai === 'MATCH_FOUND';
+        const s_warn = log.sdp === 'MATCH_FOUND';
+        const u_warn = log.maliciousUri === 'MATCH_FOUND';
+
         tr.innerHTML = `
           <td class="font-mono text-xs font-bold">${log.id}<br/><span class="text-stone-400 font-normal">${log.timestamp}</span></td>
           <td class="font-bold text-stone-900 text-xs">${log.userEmail}</td>
+          <td class="font-bold text-stone-700 text-xs max-w-[120px] truncate" title="${log.appName}">${log.appName}</td>
           <td class="font-mono text-xs text-purple-700 font-bold">${log.operation_type}</td>
           <td class="font-medium text-xs text-stone-900">
             <div class="text-hover-container">
@@ -1490,8 +1502,12 @@
             </div>
           </td>
           <td><span class="badge-crextio badge-red font-bold">${log.verdict}</span></td>
-          <td class="text-xs font-medium text-red-800">${log.verdict_reason}</td>
-          <td><span class="badge-crextio badge-black font-bold">${log.pi_jailbreak_match_state}</span></td>
+          <td class="text-xs font-medium text-red-800 max-w-[150px] truncate" title="${log.verdict_reason}">${log.verdict_reason}</td>
+          <td><span class="badge-crextio ${c_warn ? 'badge-red' : 'badge-green'} font-bold">${log.csam === 'MATCH_FOUND' ? 'DETECT' : 'SAFE'}</span></td>
+          <td><span class="badge-crextio ${p_warn ? 'badge-red' : 'badge-green'} font-bold">${log.piJailbreak === 'MATCH_FOUND' ? 'DETECT' : 'SAFE'}</span></td>
+          <td><span class="badge-crextio ${r_warn ? 'badge-red' : 'badge-green'} font-bold">${log.rai === 'MATCH_FOUND' ? 'DETECT' : 'SAFE'}</span></td>
+          <td><span class="badge-crextio ${s_warn ? 'badge-red' : 'badge-green'} font-bold">${log.sdp === 'MATCH_FOUND' ? 'DETECT' : 'SAFE'}</span></td>
+          <td><span class="badge-crextio ${u_warn ? 'badge-red' : 'badge-green'} font-bold">${log.maliciousUri === 'MATCH_FOUND' ? 'DETECT' : 'SAFE'}</span></td>
         `;
         tbody.appendChild(tr);
       });
