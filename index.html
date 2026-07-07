@@ -1479,11 +1479,18 @@
 
       currentData.modelArmorLogs.forEach(log => {
         const tr = document.createElement('tr');
-        const c_warn = log.csam && log.csam.includes('MATCH_FOUND');
-        const p_warn = log.piJailbreak && log.piJailbreak.includes('MATCH_FOUND');
-        const r_warn = log.rai && log.rai.includes('MATCH_FOUND');
-        const s_warn = log.sdp && log.sdp.includes('MATCH_FOUND');
-        const u_warn = log.maliciousUri && log.maliciousUri.includes('MATCH_FOUND');
+        const isViolated = (val) => {
+          if (!val) return false;
+          const s = String(val).toUpperCase();
+          if (s.includes('NO_MATCH') || s.includes('SAFE')) return false;
+          return s.includes('MATCH') || s.includes('DETECT') || s.includes('FOUND') || s === 'TRUE';
+        };
+
+        const c_warn = isViolated(log.csam);
+        const p_warn = isViolated(log.piJailbreak);
+        const r_warn = isViolated(log.rai);
+        const s_warn = isViolated(log.sdp);
+        const u_warn = isViolated(log.maliciousUri);
 
         tr.innerHTML = `
           <td class="font-mono text-xs font-bold">${log.id}<br/><span class="text-stone-400 font-normal">${log.timestamp}</span></td>
