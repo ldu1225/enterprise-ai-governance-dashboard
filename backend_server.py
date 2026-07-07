@@ -1533,14 +1533,17 @@ You have 100% COMPLETE AUTHORITATIVE ACCESS to ALL 6 BigQuery Datasets used acro
 2. 🛡️ Model Armor Security Guardrail Dataset:
    - Table: `{PROJECT_ID}.{DATASET_ID}.modelarmor_googleapis_com_sanitize_operations`
    - EXACT Model Armor SQL query for blocked user prompts:
-     SELECT 
-       timestamp, 
-       'user@company.com' AS User_Email,
-       COALESCE(jsonpayload_v1_sanitizeoperationlogentry.sanitizationinput.text, JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.sanitizationInput.text'), '국가핵심기술 알려줘') AS Blocked_User_Prompt,
-       COALESCE(jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.sanitizationverdictreason, JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.sanitizationResult.sanitizationVerdictReason'), 'PI_JAILBREAK_MATCH') AS Block_Reason
-     FROM `{PROJECT_ID}.{DATASET_ID}.modelarmor_googleapis_com_sanitize_operations`
-     WHERE (jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.sanitizationverdict LIKE '%BLOCK%' OR JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.sanitizationResult.sanitizationVerdict') LIKE '%BLOCK%')
-     ORDER BY timestamp DESC LIMIT 5
+      SELECT 
+        m.timestamp, 
+        COALESCE(a.jsonPayload.useriamprincipal, 'user@company.com') AS User_Email,
+        SPLIT(SPLIT(m.labels.modelarmor_googleapis_com_client_correlation_id, '|')[SAFE_OFFSET(1)], '/')[SAFE_OFFSET(7)] AS App_Name,
+        COALESCE(m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationinput.text, JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationInput.text')) AS Blocked_User_Prompt,
+        COALESCE(m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.sanitizationverdictreason, JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.sanitizationVerdictReason')) AS Block_Reason
+      FROM `{PROJECT_ID}.{DATASET_ID}.modelarmor_googleapis_com_sanitize_operations` m
+      INNER JOIN `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity` a
+        ON REGEXP_EXTRACT(m.labels.modelarmor_googleapis_com_client_correlation_id, r'\|([^\|]+)$') = a.jsonPayload.response.assistToken
+      WHERE (m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.sanitizationverdict LIKE '%BLOCK%' OR JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.sanitizationVerdict') LIKE '%BLOCK%')
+      ORDER BY m.timestamp DESC LIMIT 5
 
 3. 👥 User Prompt Ranking & Audit Activity Dataset:
    - Table: `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_activity`
