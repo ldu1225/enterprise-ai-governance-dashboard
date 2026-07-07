@@ -1491,7 +1491,6 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
         QUERY_CACHE[cache_key] = {'data': real_agents, 'ts': now}
         self.send_json(real_agents)
-
     def handle_get_versions(self):
         self.send_json(DASHBOARD_VERSIONS)
 
@@ -1522,9 +1521,11 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         client, token = get_bq_client_and_token()
         print(f"DEBUG TOKEN ACQUIRED: {bool(token)}", flush=True)
         
+        company_name = SYS_CONFIG.get("dashboard", {}).get("title", "LG Energy Solution")
+
         system_prompt = f"""
-You are the Master AI Governance Analytics Engine powered by Gemini 3.5 Flash for LG Energy Solution.
-You have 100% COMPLETE AUTHORITATIVE ACCESS to ALL 6 BigQuery Datasets used across the entire LGES Governance Dashboard app:
+You are the Master AI Governance Analytics Engine powered by Gemini 3.5 Flash for {company_name}.
+You have 100% COMPLETE AUTHORITATIVE ACCESS to ALL 6 BigQuery Datasets used across the entire {company_name} Governance Dashboard app:
 
 1. 💳 GCP Detailed Billing Export Dataset:
    - Table: `{PROJECT_ID}.{BILLING_DATASET}.{BILLING_TABLE}`
@@ -1575,7 +1576,7 @@ CRITICAL INSTRUCTIONS FOR SQL GENERATION:
         contents = []
         contents.append({"role": "user", "parts": [{"text": system_prompt}]})
         contents.append({"role": "model", "parts": [{"text": json.dumps({
-            "answerComment": "안녕하세요! LG Energy Solution AI Governance Analytics AI Engine입니다. 실시간 BigQuery 조회를 통해 데이터 분석과 전문가 인사이트를 제공해 드립니다.",
+            "answerComment": f"안녕하세요! {company_name} AI Governance Analytics AI Engine입니다. 실시간 BigQuery 조회를 통해 데이터 분석과 전문가 인사이트를 제공해 드립니다.",
             "sql": f"SELECT service.description as Service, ROUND(SUM(cost), 2) as Cost_USD FROM `{PROJECT_ID}.{BILLING_DATASET}.{BILLING_TABLE}` WHERE usage_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY) GROUP BY Service ORDER BY Cost_USD DESC LIMIT 5",
             "suggestedQuestions": ["📊 이번달 가장 비용 높은 GCP 서비스 Top 3 알려줘", "👥 유저별 프롬프트 제출 수 알려줘", "💡 과금 급증 서비스 분석해줘"]
         })}]})
@@ -1701,7 +1702,7 @@ CRITICAL INSTRUCTIONS FOR SQL GENERATION:
             if token and len(table_rows) > 0:
                 try:
                     analysis_prompt = f"""
-                    You are an Executive Data Analyst for LG Energy Solution.
+                    You are an Executive Data Analyst for {company_name}.
                     Analyze the following REAL BigQuery Execution Result for user question: "{user_q}"
 
                     Execution Result Headers: {json.dumps(headers, ensure_ascii=False)}

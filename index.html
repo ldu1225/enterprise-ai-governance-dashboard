@@ -179,8 +179,8 @@
         <img src="/lg_logo.png" alt="LG Logo" class="w-9 h-9 object-contain" onerror="this.onerror=null; this.src='https://www.lgensol.com/favicon.ico';" />
       </div>
       <div>
-        <h1 class="font-extrabold text-2xl text-stone-900 tracking-tight">LG Energy Solution</h1>
-        <p class="text-xs text-stone-500 font-medium">AI Governance & Agent Platform Dashboard</p>
+        <h1 id="dashboard-title" class="font-extrabold text-2xl text-stone-900 tracking-tight">LG Energy Solution</h1>
+        <p id="dashboard-subtitle" class="text-xs text-stone-500 font-medium">AI Governance & Agent Platform Dashboard</p>
       </div>
     </div>
 
@@ -768,9 +768,27 @@
     }
 
     window.addEventListener('DOMContentLoaded', () => {
+      loadConfig();
       loadRealGcpProjects();
       fetchDashboardData();
     });
+
+    async function loadConfig() {
+      try {
+        const config = await fetch('/api/config').then(r => r.json());
+        if (config.title) {
+          document.title = `${config.title} - AI Governance Dashboard`;
+          const titleEl = document.getElementById('dashboard-title');
+          if (titleEl) titleEl.innerText = config.title;
+        }
+        if (config.subtitle) {
+          const subtitleEl = document.getElementById('dashboard-subtitle');
+          if (subtitleEl) subtitleEl.innerText = config.subtitle;
+        }
+      } catch (err) {
+        console.error("Config load error:", err);
+      }
+    }
 
     async function loadRealGcpProjects() {
       try {
