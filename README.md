@@ -85,7 +85,41 @@ Vertex AI Agent, Cloud Audit, Model Armor 보안 차단 기록 로그를 BigQuer
 
 ---
 
-## 🌟 3. 핵심 기능 및 엔터프라이즈 하이라이트 (Key Features)
+## 💾 3. BigQuery 데이터 보존 기한 및 비용 최적화 (Data Retention & Cost Optimization)
+
+감사 로그 및 실시간 빌링 데이터가 BigQuery에 무제한 누적되어 스토리지 비용이 불필요하게 청구되는 것을 방지하기 위해, 관리자는 **최대 4개월(120일) 보존 정책**을 강제하도록 설정할 수 있습니다. 
+
+### 3.1 파티션별 만료 기한 설정 (Time Partition Expiration - 적극 권장)
+감사 로그 테이블들은 날짜(`timestamp`) 기준으로 파티션이 나뉘어 있습니다. 테이블 자체는 유지하면서 **120일(4개월)이 지난 과거 데이터 행들만 백엔드에서 자동 순차 삭제**되도록 설정합니다.
+
+1. **Cloud Shell 또는 로컬 CLI**를 엽니다.
+2. 아래 `bq update` 명령어를 실행하여 파티션 유효기간을 120일(10,368,000초)로 업데이트합니다:
+   ```bash
+   # 1. Gemini Enterprise 사용자 활동 로그 파티션 만료 설정 (120일)
+   bq update --time_partitioning_expiration 10368000 your-gcp-project-id:your_audit_dataset_id.discoveryengine_googleapis_com_gemini_enterprise_user_activity
+
+   # 2. Gemini Enterprise 유저 메시지 로그 파티션 만료 설정 (120일)
+   bq update --time_partitioning_expiration 10368000 your-gcp-project-id:your_audit_dataset_id.discoveryengine_googleapis_com_gen_ai_user_message
+
+   # 3. Model Armor 보안 차단 로그 파티션 만료 설정 (120일)
+   bq update --time_partitioning_expiration 10368000 your-gcp-project-id:your_audit_dataset_id.modelarmor_googleapis_com_sanitize_operations
+   ```
+3. 설정이 완료되면 구글 클라우드가 매일 백그라운드에서 120일을 초과한 과거 로그 파티션을 자동으로 영구 파기하여 비용을 극대화하여 아껴줍니다.
+
+### 3.2 데이터셋 기본 테이블 만료 기한 설정 (Default Table Expiration)
+데이터셋 내에 향후 임시 혹은 신규 생성되는 모든 감사/과금 테이블들의 기본 수명을 일괄적으로 120일로 제한합니다.
+
+1. **GCP BigQuery 콘솔**로 이동합니다.
+2. 생성한 감사 로그 데이터셋(예: `ge_analytics`)을 선택하고 **[Details (세부정보)] ➡️ [Edit (편집)]**을 클릭합니다.
+3. **Table Expiration (테이블 만료)** 체크박스를 활성화하고 **`120` 일**로 입력한 뒤 저장합니다.
+4. (CLI 명령어 실행):
+   ```bash
+   bq update --default_table_expiration 10368000 your-gcp-project-id:your_audit_dataset_id
+   ```
+
+---
+
+## 🌟 4. 핵심 기능 및 엔터프라이즈 하이라이트 (Key Features)
 
 ### 1️⃣ LLM 모델별 과금 추이 및 동적 SKU 묶음 리포트
 - **GCP Detailed Billing Export 100% 실시간 연동**: `billing_detailed_usage` 테이블을 직접 쿼리하여 Claude 3.5 Sonnet / Sonnet 4.5, Gemini 3.5 Flash, Gemini 3.1 Flash Lite, Gemini 3.0 Pro 등 모든 생성형 AI 모델의 사용 토큰 수량(Tokens) 및 소요 비용($ USD)을 추적합니다.
@@ -102,7 +136,7 @@ Vertex AI Agent, Cloud Audit, Model Armor 보안 차단 기록 로그를 BigQuer
 
 ---
 
-## 📊 4. 대시보드 메트릭 및 BigQuery 데이터 소스 매핑 (Metrics Map)
+## 📊 5. 대시보드 메트릭 및 BigQuery 데이터 소스 매핑 (Metrics Map)
 
 대시보드의 개별 카드 및 그래프를 산출하는 데 사용된 구체적인 BigQuery 원천 데이터 및 컬럼 매핑 관계는 다음과 같습니다:
 
@@ -121,7 +155,7 @@ Vertex AI Agent, Cloud Audit, Model Armor 보안 차단 기록 로그를 BigQuer
 
 ---
 
-## 🛠️ 5. 단계별 빌드 및 배포 마스터 가이드 (Step-by-Step Deployment Guide)
+## 🛠️ 6. 단계별 빌드 및 배포 마스터 가이드 (Step-by-Step Deployment Guide)
 
 고객사 환경에 플랫폼을 구축 및 빌드하기 위한 5단계 표준 흐름입니다. 아래 단계를 순서대로 빠짐없이 진행하십시오.
 
@@ -177,7 +211,7 @@ Vertex AI Agent, Cloud Audit, Model Armor 보안 차단 기록 로그를 BigQuer
 
 ---
 
-## 📄 6. 구성 파일 설명 (Project Structure)
+## 📄 7. 구성 파일 설명 (Project Structure)
 
 - `backend_server.py`: Python 기반 다중 스레드 HTTP REST 백엔드 서버 (BigQuery Integration & Gemini 3.5 Flash 2nd-Pass Fact Analyzer Engine)
 - `index.html`: 크렉스티오(Crextio) 엔터프라이즈 디자인 시스템 기반 프론트엔드 대시보드 & AI 챗봇 모달 UI
