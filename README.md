@@ -123,9 +123,9 @@ graph TD
        account_id: "your-billing-account-id"     # 결제 계정 ID (E.g. 01E9C5-XXXXXX)
 
    dashboard:
-     title: "LG Energy Solution"                 # 대시보드 및 AI 챗봇의 주 타이틀 명칭
+     title: "your-company-name"                  # 대시보드 및 AI 챗봇의 주 타이틀 명칭
      subtitle: "AI Governance & Agent Platform Dashboard" # 대시보드 부 타이틀 명칭
-     logo_path: "/lg_logo.png"                   # 커스텀 로고 이미지 경로 (favicon 자동 지정)
+     logo_path: "/favicon.ico"                   # 커스텀 로고 이미지 경로 (favicon 자동 지정)
      default_days: 7                             # 초기 데이터 조회 기간 (일 단위)
    ```
 

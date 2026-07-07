@@ -24,7 +24,7 @@ gcp:
     account_id: "your-billing-account-id"
 
 dashboard:
-  title: "LG Energy Solution"
+  title: "your-company-name"
   subtitle: "AI Governance & Agent Platform Dashboard"
-  logo_path: "/lg_logo.png"
+  logo_path: "/favicon.ico"
   default_days: 7
