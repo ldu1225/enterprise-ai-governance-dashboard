@@ -86,9 +86,6 @@ BILLING_DATASET = os.environ.get("BILLING_DATASET_ID", SYS_CONFIG.get("billing_d
 BILLING_TABLE = os.environ.get("BILLING_TABLE_ID", SYS_CONFIG.get("billing_table_id", "gcp_billing_export_resource_v1_01E9C5_E0B654_4D2CB0"))
 BILLING_ACCOUNT_ID = os.environ.get("BILLING_ACCOUNT_ID", SYS_CONFIG.get("billing_account_id", "01E9C5-E0B654-4D2CB0"))
 
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@lges.com")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "lges1234!")
-
 socketserver.TCPServer.allow_reuse_address = True
 
 # 글로벌 토큰 및 성능 최적화 캐시
@@ -343,33 +340,13 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         except:
             payload = {}
 
-        if path == "/api/auth/login":
-            self.handle_auth_login(payload)
-        elif path == "/api/dashboard/versions":
+        if path == "/api/dashboard/versions":
             self.handle_save_version(payload)
         elif path == "/api/chat":
             self.handle_conversational_analytics_chat(payload)
         else:
             self.send_response(404)
             self.end_headers()
-
-    def handle_auth_login(self, payload):
-        email = payload.get("email", "").strip()
-        password = payload.get("password", "").strip()
-
-        if email == ADMIN_EMAIL and password == ADMIN_PASSWORD:
-            print(f"🔑 [Login Success] Branded Portal authenticated for user: {email}")
-            self.send_json({
-                "success": True,
-                "message": "로그인 성공",
-                "userEmail": email
-            })
-        else:
-            print(f"⚠️ [Login Failure] Failed authentication attempt. Email: {email}")
-            self.send_json({
-                "success": False,
-                "message": "이메일 또는 비밀번호가 올바르지 않습니다."
-            })
 
     def handle_summary_official_bq(self, s_dt, e_dt):
         cache_key = f"summary_strict_block_{s_dt}_{e_dt}"
@@ -742,39 +719,45 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         client, _ = get_bq_client_and_token()
-        where_clause = build_where_clause(s_dt, e_dt, "timestamp")
+        where_clause_m = build_where_clause(s_dt, e_dt, "m.timestamp")
 
         sql = f"""
         SELECT
-          timestamp,
+          m.timestamp,
           COALESCE(
-            jsonpayload_v1_sanitizeoperationlogentry.operationtype,
-            JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.operationType')
+              a.jsonPayload.useriamprincipal,
+              'user@company.com'
+          ) as bq_user,
+          COALESCE(
+            m.jsonpayload_v1_sanitizeoperationlogentry.operationtype,
+            JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.operationType')
           ) AS operation_type,
           COALESCE(
-            jsonpayload_v1_sanitizeoperationlogentry.sanitizationinput.text,
-            JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.sanitizationInput.text'),
-            JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.content.parts[0].text')
+            m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationinput.text,
+            JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationInput.text'),
+            JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.content.parts[0].text')
           ) AS input_text,
           COALESCE(
-            jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.sanitizationverdict,
-            JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.sanitizationResult.sanitizationVerdict')
+            m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.sanitizationverdict,
+            JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.sanitizationVerdict')
           ) AS verdict,
           COALESCE(
-            jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.sanitizationverdictreason,
-            JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.sanitizationResult.sanitizationVerdictReason')
+            m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.sanitizationverdictreason,
+            JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.sanitizationVerdictReason')
           ) AS verdict_reason,
           COALESCE(
-            jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.filtermatchstate,
-            JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.sanitizationResult.filterMatchState')
+            m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.filtermatchstate,
+            JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.filterMatchState')
           ) AS filter_match_state
-        FROM `{PROJECT_ID}.{DATASET_ID}.modelarmor_googleapis_com_sanitize_operations`
-        {where_clause}
+        FROM `{PROJECT_ID}.{DATASET_ID}.modelarmor_googleapis_com_sanitize_operations` m
+        CROSS JOIN `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity` a
+        {where_clause_m}
+          AND ABS(TIMESTAMP_DIFF(m.timestamp, a.timestamp, SECOND)) < 5
           AND (
-            jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.sanitizationverdict LIKE '%BLOCK%'
-            OR JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.sanitizationResult.sanitizationVerdict') LIKE '%BLOCK%'
+            m.jsonpayload_v1_sanitizeoperationlogentry.sanitizationresult.sanitizationverdict LIKE '%BLOCK%'
+            OR JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.sanitizationResult.sanitizationVerdict') LIKE '%BLOCK%'
           )
-        ORDER BY timestamp DESC
+        ORDER BY m.timestamp DESC
         LIMIT 100
         """
         try:
@@ -792,7 +775,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 logs.append({
                     "id": f"MA-BLOCK-{i+1:03d}",
                     "timestamp": str(r['timestamp'])[:19] if r['timestamp'] else "",
-                    "userEmail": "user@company.com",
+                    "userEmail": r['bq_user'] or "user@company.com",
                     "operation_type": r['operation_type'] or "SANITIZE_USER_PROMPT",
                     "input_text": txt,
                     "verdict": "MODEL_ARMOR_SANITIZATION_VERDICT_BLOCK",
@@ -815,19 +798,24 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         client, _ = get_bq_client_and_token()
-        where_clause = build_where_clause(s_dt, e_dt, "timestamp")
+        where_clause_m = build_where_clause(s_dt, e_dt, "m.timestamp")
 
         sql_files_full = f"""
         SELECT 
-            timestamp,
-            COALESCE(JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.user'), 'user@company.com') as bq_user,
-            JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.content.parts[1].text') as file_tag,
-            JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.content.parts[2].text') as file_info
-        FROM `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gen_ai_user_message`
-        {where_clause}
-          AND jsonPayload IS NOT NULL
-          AND JSON_EXTRACT_SCALAR(TO_JSON_STRING(jsonPayload), '$.content.parts[1].text') LIKE '%<start_of_user_uploaded_file%'
-        ORDER BY timestamp DESC
+            m.timestamp,
+            COALESCE(
+                JSON_EXTRACT_SCALAR(TO_JSON_STRING(a.jsonPayload), '$.useriamprincipal'),
+                'user@company.com'
+            ) as bq_user,
+            JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.content.parts[1].text') as file_tag,
+            JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.content.parts[2].text') as file_info
+        FROM `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gen_ai_user_message` m
+        INNER JOIN `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity` a
+          ON m.trace = a.trace
+        {where_clause_m}
+          AND m.jsonPayload IS NOT NULL
+          AND JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.content.parts[1].text') LIKE '%<start_of_user_uploaded_file%'
+        ORDER BY m.timestamp DESC
         LIMIT 50
         """
         try:
