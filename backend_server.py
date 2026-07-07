@@ -39,7 +39,11 @@ def load_config():
         "billing_dataset_id": "",
         "billing_table_id": "",
         "billing_account_id": "",
-        "cache_ttl": 600
+        "cache_ttl": 600,
+        "title": "your-company-name",
+        "subtitle": "AI Governance & Agent Platform Dashboard",
+        "logo_path": "/favicon.ico",
+        "default_days": 7
     }
     if not os.path.exists(CONFIG_FILE):
         return defaults
@@ -72,7 +76,44 @@ def load_config():
         m_bacct = re.search(r'account_id:\s*["\']?([^"\'\s#]+)', content)
         if m_bacct: cfg["billing_account_id"] = m_bacct.group(1)
 
+        # dashboard 블록 내 속성들 추출
+        m_title = re.search(r'title:\s*["\']?([^"\'\n]+)["\']?', content)
+        if m_title: cfg["title"] = m_title.group(1).strip()
+
+        m_sub = re.search(r'subtitle:\s*["\']?([^"\'\n]+)["\']?', content)
+        if m_sub: cfg["subtitle"] = m_sub.group(1).strip()
+
+        m_logo = re.search(r'logo_path:\s*["\']?([^"\'\n]+)["\']?', content)
+        if m_logo: cfg["logo_path"] = m_logo.group(1).strip()
+
+        m_days = re.search(r'default_days:\s*(\d+)', content)
+        if m_days: cfg["default_days"] = int(m_days.group(1))
+
+        # 👑 런타임 환경변수(Env Var) 오버라이드 지원 (Terraform/Cloud Run 우선 순위)
+        env_proj = os.environ.get("PROJECT_ID")
+        if env_proj: cfg["project_id"] = env_proj
+        env_aud = os.environ.get("AUDIT_DATASET_ID")
+        if env_aud: cfg["audit_dataset_id"] = env_aud
+        env_bds = os.environ.get("BILLING_DATASET_ID")
+        if env_bds: cfg["billing_dataset_id"] = env_bds
+        env_btbl = os.environ.get("BILLING_TABLE_ID")
+        if env_btbl: cfg["billing_table_id"] = env_btbl
+        env_bacct = os.environ.get("BILLING_ACCOUNT_ID")
+        if env_bacct: cfg["billing_account_id"] = env_bacct
+
+        env_title = os.environ.get("DASHBOARD_TITLE")
+        if env_title: cfg["title"] = env_title
+        env_sub = os.environ.get("DASHBOARD_SUBTITLE")
+        if env_sub: cfg["subtitle"] = env_sub
+        env_logo = os.environ.get("DASHBOARD_LOGO_PATH")
+        if env_logo: cfg["logo_path"] = env_logo
+        env_days = os.environ.get("DASHBOARD_DEFAULT_DAYS")
+        if env_days: cfg["default_days"] = int(env_days)
+
         return cfg
+    except Exception as e:
+        print(f"[Config Loader Warning] config.yaml 로드 중 오류 발생, 기본값 적용: {e}")
+        return defaults
     except Exception as e:
         print(f"[Config Loader Warning] config.yaml 로드 중 오류 발생, 기본값 적용: {e}")
         return defaults
@@ -320,8 +361,8 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 "billing_dataset_id": BILLING_DATASET,
                 "billing_table_id": BILLING_TABLE,
                 "billing_account_id": BILLING_ACCOUNT_ID,
-                "title": SYS_CONFIG.get("dashboard", {}).get("title", "LG Energy Solution"),
-                "subtitle": SYS_CONFIG.get("dashboard", {}).get("subtitle", "AI Governance & Agent Platform Dashboard")
+                "title": SYS_CONFIG.get("title", "your-company-name"),
+                "subtitle": SYS_CONFIG.get("subtitle", "AI Governance & Agent Platform Dashboard")
             })
         elif path == "/api/dashboard/versions":
             self.handle_get_versions()

@@ -166,6 +166,8 @@ graph TD
      billing_dataset_id = "your_billing_dataset_id"
      billing_table_id   = "gcp_billing_export_resource_v1_your_billing_account"
      billing_account_id = "your-billing-account-id"
+     dashboard_title    = "your-company-name"
+     dashboard_subtitle = "AI Governance & Agent Platform Dashboard"
      ```
 2. **테라폼 명령어 실행**:
    ```bash

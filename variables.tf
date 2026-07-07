@@ -32,3 +32,15 @@ variable "billing_account_id" {
   type        = string
   description = "GCP Billing Account ID (결제 계정 ID)"
 }
+
+variable "dashboard_title" {
+  type        = string
+  default     = "your-company-name"
+  description = "대시보드 및 AI 챗봇의 주 브랜드 타이틀 명칭"
+}
+
+variable "dashboard_subtitle" {
+  type        = string
+  default     = "AI Governance & Agent Platform Dashboard"
+  description = "대시보드 부 타이틀 명칭"
+}

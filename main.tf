@@ -69,6 +69,14 @@ resource "google_cloud_run_v2_service" "dashboard" {
         name  = "BILLING_ACCOUNT_ID"
         value = var.billing_account_id
       }
+      env {
+        name  = "DASHBOARD_TITLE"
+        value = var.dashboard_title
+      }
+      env {
+        name  = "DASHBOARD_SUBTITLE"
+        value = var.dashboard_subtitle
+      }
     }
   }
 
