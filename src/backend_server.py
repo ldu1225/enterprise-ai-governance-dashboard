@@ -197,7 +197,7 @@ def llm_group_skus_via_gemini(sku_list):
         Do NOT wrap in markdown, backticks, or code blocks.
         """
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.5-flash',
             contents=prompt
         )
         txt = response.text.strip()
@@ -266,7 +266,7 @@ def llm_reconcile_sa_models(sa_list, billing_models):
         Do NOT wrap in markdown or backticks.
         """
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.5-flash',
             contents=prompt
         )
         txt = response.text.strip()
@@ -875,7 +875,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                                 Do NOT include markdown, code blocks (such as ```json), or backticks. Return the raw JSON string directly.
                                 """
                                 response_genai = client_genai.models.generate_content(
-                                    model='gemini-2.5-flash',
+                                    model='gemini-3.5-flash',
                                     contents=prompt_gemini
                                 )
                                 txt_res = response_genai.text.strip()
