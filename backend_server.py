@@ -551,6 +551,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
             model_totals = {}
             timeline_map = {}
+            model_sub_skus = {}
 
             for r in rows:
                 raw_sku = str(r['raw_sku_desc'])
@@ -561,8 +562,14 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
                 if clean_cat not in model_totals:
                     model_totals[clean_cat] = {'tokens': 0, 'cost': 0.0}
+                    model_sub_skus[clean_cat] = {}
                 model_totals[clean_cat]['tokens'] += toks
                 model_totals[clean_cat]['cost'] += cost
+
+                if raw_sku not in model_sub_skus[clean_cat]:
+                    model_sub_skus[clean_cat][raw_sku] = {'tokens': 0, 'cost': 0.0}
+                model_sub_skus[clean_cat][raw_sku]['tokens'] += toks
+                model_sub_skus[clean_cat][raw_sku]['cost'] += cost
 
                 if d_str not in timeline_map:
                     timeline_map[d_str] = {}
@@ -587,13 +594,30 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
                 col = colors[idx % len(colors)]
 
+                sub_sku_list = []
+                for sub_sku, sub_data in model_sub_skus.get(cat, {}).items():
+                    sub_tok = sub_data['tokens']
+                    sub_cost = sub_data['cost']
+                    if sub_tok >= 1_000_000:
+                        sub_tok_fmt = f"{sub_tok / 1_000_000:.2f}M Tokens"
+                    elif sub_tok >= 1_000:
+                        sub_tok_fmt = f"{sub_tok / 1_000:.1f}K Tokens"
+                    else:
+                        sub_tok_fmt = f"{sub_tok:,} Tokens"
+                    sub_sku_list.append({
+                        "rawSku": sub_sku,
+                        "formattedTokens": sub_tok_fmt,
+                        "formattedCost": f"${sub_cost:.4f} USD"
+                    })
+
                 dynamic_models.append({
                     "id": m_id,
                     "name": cat,
                     "rawCategory": cat,
                     "color": col,
                     "formattedTokens": tok_fmt,
-                    "formattedCost": f"${cost_val:.2f} USD"
+                    "formattedCost": f"${cost_val:.2f} USD",
+                    "subSkus": sub_sku_list
                 })
 
                 summaries.append({
@@ -1142,12 +1166,12 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             rows = list(client.query(sql_heavy).result())
             result = [{"email": r['email'], "activity_count": r['activity_count']} for r in rows if r['email']]
             if not result:
-                result = [{"email": "user@company.com", "activity_count": 86}]
+                result = []
             QUERY_CACHE[cache_key] = {'data': result, 'ts': now}
             self.send_json(result)
         except Exception as e:
             print("Audit heavy users strict email error:", e)
-            self.send_json([{"email": "user@company.com", "activity_count": 86}])
+            self.send_json([])
 
     def handle_agent_creation_timeline(self, s_dt, e_dt, step_days=1):
         cache_key = f"agent_creation_{s_dt}_{e_dt}_{step_days}"
@@ -1258,20 +1282,12 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                         "created_agents": real_agent_names
                     })
             if not result:
-                result = [{
-                    "email": "user@company.com",
-                    "created_count": len(real_agent_names),
-                    "created_agents": real_agent_names
-                }]
+                result = []
             QUERY_CACHE[cache_key] = {'data': result, 'ts': now}
             self.send_json(result)
         except Exception as e:
             print("Audit agent creators query error:", e)
-            self.send_json([{
-                "email": "user@company.com",
-                "created_count": 6,
-                "created_agents": ["NEWSPAPER_AGENT", "REASONING_ENGINE_POC", "ADK_ASSISTANT_V2", "FINANCE_ANALYST_AGENT", "HR_HELPER_BOT", "LOGISTICS_OPTIMIZER"]
-            }])
+            self.send_json([])
 
     def handle_service_account_tokens(self, s_dt=None, e_dt=None):
         client, _ = get_bq_client_and_token()

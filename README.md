@@ -46,12 +46,18 @@ graph TD
 ### 1️⃣ LLM 모델별 과금 추이 및 동적 SKU 묶음 리포트
 - **GCP Detailed Billing Export 100% 실시간 연동**: `billing_detailed_usage` 테이블을 직접 쿼리하여 Claude 3.5 Sonnet / Sonnet 4.5, Gemini 3.5 Flash, Gemini 3.1 Flash Lite, Gemini 3.0 Pro 등 모든 생성형 AI 모델의 사용 토큰 수량(Tokens) 및 소요 비용($ USD)을 추적합니다.
 - **Gemini 3.5 Flash 동적 SKU 매핑**: 복잡하고 가변적인 GCP Billing SKU 문자열을 Gemini 3.5 Flash가 동적으로 그룹핑하여 대표 모델명으로 자동 합산 및 정렬합니다.
+- **세부 원본 SKU 명세 드릴다운 (SKU Drill-down) 💡**: 대시보드의 각 모델 카드를 클릭하면 해당 모델로 매핑된 Google Cloud Billing의 실제 세부 원본 SKU 코드 목록(`rawSku`), 각 SKU별 토큰 소요량 및 실제 비용 누적액이 하단 테이블(`세부 원본 SKU 명세`)에 실시간으로 펼쳐집니다.
 - **동적 시스템 일자 앵커링**: 조회 기준일을 시스템 현재 날짜로 자동 계산하여 향후 접속 시에도 항상 오늘 시점까지의 과금 꺾은선 피크를 완벽히 표출합니다.
 
 ### 2️⃣ Model Armor 실시간 보안 차단 감사 로그 (Sanitized Verdict Block)
 - **실제 프롬프트 텍스트 조회**: BigQuery `modelarmor_sanitize_operations` 테이블과 직결되어, 차단된 원본 사용자 프롬프트 문구와 차단 사유(`VERDICT_BLOCK: PI_JAILBREAK_MATCH` 등)를 100% 투명하게 관제합니다.
 
-### 3️⃣ Gemini 3.5 Flash 기반 2단계(2nd-Pass) 팩트 분석 AI 챗봇
+### 3️⃣ 완전 무결한 실측 연동 및 브랜드 커스텀 (Branding & Clean Data) 💡
+- **동적 브랜딩 오버라이드 지원**: `config.yaml` 내 `dashboard` 항목 또는 컨테이너 환경 변수 `DASHBOARD_TITLE`, `DASHBOARD_SUBTITLE` 주입을 통해 전사 대시보드 메인 로고 타이틀과 서브타이틀 명칭을 코드 변경 없이 원스톱 변경할 수 있습니다.
+- **동적 결제 계정 ID 바인딩**: 기존 하드코딩되었던 결제 계정 링크/텍스트를 제거하고, 서버의 `/api/config` 응답에서 빌링 계정 ID를 dynamic하게 읽어와 렌더링함으로써 보안성과 가용성을 높였습니다.
+- **가짜 데이터(Mock Fallback)의 원천 차단**: BigQuery 연결 실패나 빈 데이터셋 조회 시 표출되던 가짜 테스트 계정(`user@company.com`)과 목업 에이전트 목록을 완전히 소거했습니다. 실데이터가 없을 시 깨끗하게 빈 목록(`[]`)으로 폴백하도록 정밀 가공되었습니다.
+
+### 4️⃣ Gemini 3.5 Flash 기반 2단계(2nd-Pass) 팩트 분석 AI 챗봇
 - **전사 6대 BigQuery 데이터셋 100% 통합 인지**: Billing, ModelArmor, DiscoveryEngine, CloudAudit, CodeAssist, AgentRegistry 데이터셋 전체를 지능적으로 쿼리합니다.
 - **실행 결과 기반 2단계 팩트 분석 (Execute-then-Analyze)**: BigQuery에서 실제 조회된 팩트 데이터(토큰 수량, 달러 비용, 차단 텍스트 등)를 읽고 100% 명확한 분석 결과를 작성합니다.
 - **지능형 차트 조건부 렌더링**: 수치 통계 질문(Top 3 비용, 유저 랭킹 등)에만 정밀 차트를 렌더링하고, 프롬프트 문구 및 이력 목록 조회 시에는 차트를 비활성화하여 정갈한 텍스트 리포트를 제공합니다.

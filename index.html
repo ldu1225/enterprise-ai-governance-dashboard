@@ -372,6 +372,31 @@
         </div>
 
         <div id="dynamic-summary-cards-container" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 pt-3 border-t border-stone-100"></div>
+
+        <!-- 💡 세부 SKU 정보 표시 영역 추가 -->
+        <div id="dynamic-subskus-detail-container" class="mt-4 p-4 bg-stone-50 rounded-2xl border border-stone-200/80 hidden transition-all">
+          <div class="flex justify-between items-center mb-3">
+            <h4 class="text-xs font-extrabold text-stone-700 flex items-center gap-1.5">
+              <span id="subsku-title-color-dot" class="w-2.5 h-2.5 rounded-full inline-block"></span>
+              <span id="subsku-title-model-name" class="underline decoration-stone-300">Model Name</span> 세부 원본 SKU 명세 (BigQuery Raw Data)
+            </h4>
+            <span class="text-[10px] text-stone-400 font-bold">Gemini 3.5 Flash 병합 전 실측 데이터</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr class="border-b border-stone-200 text-stone-500 font-bold text-[10px]">
+                  <th class="pb-2 pl-2">구글 클라우드 공식 Billing 원본 SKU 명칭 (Raw SKU Description)</th>
+                  <th class="pb-2 text-right">사용량 (Tokens)</th>
+                  <th class="pb-2 text-right pr-2">누적 과금액 ($ USD)</th>
+                </tr>
+              </thead>
+              <tbody id="dynamic-subskus-table-body" class="text-stone-900 font-semibold text-xs">
+                <!-- Javascript로 동적 렌더링 -->
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <div class="card-crextio p-7 lg:col-span-1 flex flex-col justify-between overflow-hidden">
@@ -1063,6 +1088,38 @@
         `;
         cardsContainer.appendChild(div);
       });
+
+      // 💡 선택된 특정 모델의 세부 원시 SKU 목록 그리기
+      const detailContainer = document.getElementById('dynamic-subskus-detail-container');
+      const subTbody = document.getElementById('dynamic-subskus-table-body');
+      
+      if (selectedModelFilter === 'all') {
+        detailContainer.classList.add('hidden');
+        subTbody.innerHTML = '';
+      } else {
+        const activeModel = models.find(m => m.id === selectedModelFilter);
+        if (activeModel && activeModel.subSkus && activeModel.subSkus.length > 0) {
+          detailContainer.classList.remove('hidden');
+          
+          document.getElementById('subsku-title-model-name').innerText = activeModel.name;
+          document.getElementById('subsku-title-model-name').style.color = activeModel.color;
+          document.getElementById('subsku-title-color-dot').style.backgroundColor = activeModel.color;
+          
+          subTbody.innerHTML = '';
+          activeModel.subSkus.forEach(sku => {
+            const tr = document.createElement('tr');
+            tr.className = "border-b border-stone-200/50 hover:bg-stone-100/50 transition-colors";
+            tr.innerHTML = `
+              <td class="py-2 pl-2 font-mono text-[11px] text-stone-600 truncate max-w-[400px]" title="${sku.rawSku}">${sku.rawSku}</td>
+              <td class="py-2 text-right font-bold text-stone-800">${sku.formattedTokens}</td>
+              <td class="py-2 text-right pr-2 font-extrabold text-stone-900">${sku.formattedCost}</td>
+            `;
+            subTbody.appendChild(tr);
+          });
+        } else {
+          detailContainer.classList.add('hidden');
+        }
+      }
 
       const filteredModels = selectedModelFilter === 'all' 
         ? models 
