@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LGES AI Governance & Agent Platform Dashboard</title>
+  <title>New Customer - AI Governance Dashboard</title>
+  <link rel="icon" type="image/png" href="/lg_logo.png" />
 
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -19,43 +20,17 @@
   <style>
     body {
       font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
-      background-color: #0f172a !important; /* Dark Slate-900 */
-      color: #f8fafc !important; /* Light Slate-50 */
+      background-color: #f6f6f2;
+      color: #1c1917;
     }
     .card-crextio {
-      background: #1e293b !important; /* Dark Slate-800 */
+      background: #ffffff;
       border-radius: 28px;
-      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3) !important;
-      border: 1px solid #334155 !important; /* Slate-700 */
-    }
-    
-    /* Global Overrides for White backgrounds to Dark Slate-800 */
-    .bg-white {
-      background-color: #1e293b !important;
-      color: #f8fafc !important;
-      border-color: #334155 !important;
-    }
-    
-    /* Text Color Overrides for Deep Theme */
-    .text-stone-900, .text-stone-850, .text-stone-800, .text-stone-700 {
-      color: #ffffff !important;
-    }
-    .text-stone-600, .text-stone-500, .text-stone-400 {
-      color: #94a3b8 !important; /* Cool Slate-400 */
-    }
-    
-    /* Border Color Overrides */
-    .border-stone-200, .border-stone-300, .border-stone-100 {
-      border-color: #334155 !important;
-    }
-    .border-b {
-      border-bottom-color: #334155 !important;
-    }
-    .bg-stone-50, .bg-stone-100 {
-      background-color: #0f172a !important;
+      box-shadow: 0 4px 24px -4px rgba(0, 0, 0, 0.03), 0 2px 8px -2px rgba(0, 0, 0, 0.02);
+      border: 1px solid #f0f0eb;
     }
     .btn-crextio-black {
-      background-color: #4f46e5;
+      background-color: #1c1917;
       color: #ffffff;
       border-radius: 9999px;
       padding: 8px 18px;
@@ -64,7 +39,7 @@
       transition: all 0.2s ease;
     }
     .btn-crextio-black:hover {
-      background-color: #4338ca;
+      background-color: #292524;
     }
     .custom-table {
       width: 100%;
@@ -72,17 +47,17 @@
       font-size: 0.85rem;
     }
     .custom-table th {
-      background: #0f172a !important; /* Deep Dark Slate-900 */
-      color: #94a3b8 !important; /* Cool Slate-400 */
+      background: #fafaf9;
+      color: #78716c;
       font-weight: 600;
       padding: 14px 18px;
       text-align: left;
-      border-bottom: 1px solid #334155 !important; /* Slate-700 */
+      border-bottom: 1px solid #f0f0eb;
     }
     .custom-table td {
       padding: 14px 18px;
-      border-bottom: 1px solid #334155 !important;
-      color: #cbd5e1 !important; /* Cool Slate-300 */
+      border-bottom: 1px solid #f5f5f4;
+      color: #1c1917;
     }
     .badge-crextio {
       display: inline-flex;
@@ -201,11 +176,11 @@
   <!-- Header Section -->
   <header class="flex flex-wrap justify-between items-center gap-4 border-b border-stone-200/80 pb-6">
     <div class="flex items-center gap-4">
-      <div class="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center border border-stone-200 shadow-sm" style="background-color: #ffffff !important;">
-        <img src="/lg_logo.png" alt="LG Logo" class="w-9 h-9 object-contain" onerror="this.onerror=null; this.src='https://www.lgensol.com/favicon.ico';" />
+      <div class="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center bg-white border border-stone-200 shadow-sm">
+        <img src="/google-cloud.png" alt="Google Cloud Logo" class="w-9 h-9 object-contain" />
       </div>
       <div>
-        <h1 id="dashboard-title" class="font-extrabold text-2xl text-stone-900 tracking-tight">LG Energy Solution</h1>
+        <h1 id="dashboard-title" class="font-extrabold text-2xl text-stone-900 tracking-tight">New Customer</h1>
         <p id="dashboard-subtitle" class="text-xs text-stone-500 font-medium">AI Governance & Agent Platform Dashboard</p>
       </div>
     </div>
@@ -221,10 +196,10 @@
       </div>
 
       <div class="flex items-center gap-1 bg-white p-1 rounded-full border border-stone-300 shadow-sm">
-        <button onclick="setDateDays(7)" id="btn-d-7" class="px-3.5 py-1.5 text-xs font-bold rounded-full bg-indigo-600 text-white">최근 7일</button>
-        <button onclick="setDateDays(14)" id="btn-d-14" class="px-3.5 py-1.5 text-xs font-bold rounded-full text-slate-400 hover:text-slate-200">최근 14일</button>
-        <button onclick="setDateDays(30)" id="btn-d-30" class="px-3.5 py-1.5 text-xs font-bold rounded-full text-slate-400 hover:text-slate-200">최근 30일</button>
-        <button onclick="openCustomDateModal()" id="btn-custom-modal-trigger" class="px-3.5 py-1.5 text-xs font-bold rounded-full text-slate-300 bg-slate-800 hover:bg-slate-700">📅 커스텀</button>
+        <button onclick="setDateDays(7)" id="btn-d-7" class="px-3.5 py-1.5 text-xs font-bold rounded-full bg-[#1c1917] text-white">최근 7일</button>
+        <button onclick="setDateDays(14)" id="btn-d-14" class="px-3.5 py-1.5 text-xs font-bold rounded-full text-stone-600">최근 14일</button>
+        <button onclick="setDateDays(30)" id="btn-d-30" class="px-3.5 py-1.5 text-xs font-bold rounded-full text-stone-600">최근 30일</button>
+        <button onclick="openCustomDateModal()" id="btn-custom-modal-trigger" class="px-3.5 py-1.5 text-xs font-bold rounded-full text-stone-700 bg-stone-100 hover:bg-stone-200">📅 커스텀</button>
       </div>
 
       <button onclick="openVersionModal()" class="flex items-center gap-1.5 bg-stone-900 hover:bg-stone-800 text-white px-3.5 py-2 rounded-full text-xs font-bold transition shadow-sm">
@@ -832,6 +807,10 @@
           const titleEl = document.getElementById('dashboard-title');
           if (titleEl) titleEl.innerText = config.title;
         }
+        if (config.logo_path) {
+          const logoImgEl = document.querySelector('header img');
+          if (logoImgEl) logoImgEl.src = config.logo_path;
+        }
         if (config.subtitle) {
           const subtitleEl = document.getElementById('dashboard-subtitle');
           if (subtitleEl) subtitleEl.innerText = config.subtitle;
@@ -883,12 +862,12 @@
       ['7', '14', '30'].forEach(d => {
         const btn = document.getElementById('btn-d-' + d);
         if (btn) {
-          btn.className = (parseInt(d) === days) ? "px-3.5 py-1.5 text-xs font-bold rounded-full bg-indigo-600 text-white" : "px-3.5 py-1.5 text-xs font-bold rounded-full text-slate-400 hover:text-slate-200";
+          btn.className = (parseInt(d) === days) ? "px-3.5 py-1.5 text-xs font-bold rounded-full bg-[#1c1917] text-white" : "px-3.5 py-1.5 text-xs font-bold rounded-full text-stone-600";
         }
       });
       const cBtn = document.getElementById('btn-custom-modal-trigger');
       if (cBtn) {
-        cBtn.className = "px-3.5 py-1.5 text-xs font-bold rounded-full text-slate-300 bg-slate-800 hover:bg-slate-700";
+        cBtn.className = "px-3.5 py-1.5 text-xs font-bold rounded-full text-stone-700 bg-stone-100 hover:bg-stone-200";
         cBtn.innerText = "📅 커스텀";
       }
       fetchDashboardData();
@@ -928,11 +907,11 @@
         activeDays = null;
         ['7', '14', '30'].forEach(d => {
           const btn = document.getElementById('btn-d-' + d);
-          if (btn) btn.className = "px-3.5 py-1.5 text-xs font-bold rounded-full text-slate-400 hover:text-slate-200";
+          if (btn) btn.className = "px-3.5 py-1.5 text-xs font-bold rounded-full text-stone-600";
         });
         const cBtn = document.getElementById('btn-custom-modal-trigger');
         if (cBtn) {
-          cBtn.className = "px-3.5 py-1.5 text-xs font-bold rounded-full bg-indigo-600 text-white";
+          cBtn.className = "px-3.5 py-1.5 text-xs font-bold rounded-full bg-[#1c1917] text-white";
           cBtn.innerText = `📅 ${sVal}~${eVal}`;
         }
         closeCustomDateModal();
@@ -1186,8 +1165,8 @@
             }
           },
           scales: {
-            x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
-            y: { grid: { color: '#334155' }, beginAtZero: true, ticks: { color: '#94a3b8' } }
+            x: { grid: { display: false } },
+            y: { grid: { color: '#f0f0eb' }, beginAtZero: true }
           }
         }
       });
@@ -1250,8 +1229,8 @@
             }
           },
           scales: {
-            x: { stacked: true, grid: { display: false }, ticks: { color: '#94a3b8' } },
-            y: { stacked: true, grid: { color: '#334155' }, ticks: { precision: 0, color: '#94a3b8' } }
+            x: { stacked: true, grid: { display: false } },
+            y: { stacked: true, grid: { color: '#f0f0eb' }, ticks: { precision: 0 } }
           }
         }
       });
@@ -1307,11 +1286,10 @@
             legend: { display: false }
           },
           scales: {
-            x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
+            x: { grid: { display: false } },
             y: { 
-              grid: { color: '#334155' },
+              grid: { color: '#f0f0eb' },
               ticks: {
-                color: '#94a3b8',
                 callback: function(value) { return '$' + value; }
               }
             }
@@ -1463,7 +1441,7 @@
           datasets: [{
             label: '신규 에이전트 생성 수',
             data: creationData,
-            backgroundColor: '#6366f1',
+            backgroundColor: '#8b5cf6',
             borderRadius: 8
           }]
         },
@@ -1472,8 +1450,8 @@
           maintainAspectRatio: false,
           plugins: { legend: { display: false } },
           scales: {
-            x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
-            y: { grid: { color: '#334155' }, ticks: { precision: 0, color: '#94a3b8' } }
+            x: { grid: { display: false } },
+            y: { grid: { color: '#f0f0eb' }, ticks: { precision: 0 } }
           }
         }
       });
@@ -1490,12 +1468,12 @@
 
       currentData.agentCreatorsRanking.forEach((c, idx) => {
         const itemContainer = document.createElement('div');
-        itemContainer.className = "rounded-2xl bg-indigo-950/20 border border-indigo-900/40 p-3.5 transition hover:border-indigo-700/50";
+        itemContainer.className = "rounded-2xl bg-purple-50 border border-purple-100 p-3.5 transition hover:border-purple-300";
         
         const listId = `creator-agents-list-${idx}`;
         const agList = c.created_agents || ["LGES_BATTERY_RAG_AGENT", "GEMINI_CODE_ASSIST_ADK", "NEWS_SUMMARIZER_BOT"];
         const agItemsHtml = agList.map(a => `
-          <div class="flex items-center gap-2 text-xs text-indigo-200 bg-indigo-900/40 px-2.5 py-1.5 rounded-lg border border-indigo-800/40">
+          <div class="flex items-center gap-2 text-xs text-purple-100 bg-purple-900/60 px-2.5 py-1.5 rounded-lg border border-purple-700/50">
             <span>🤖</span> <span class="font-bold font-mono">${a}</span>
           </div>
         `).join('');
@@ -1503,20 +1481,20 @@
         itemContainer.innerHTML = `
           <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('${listId}').classList.toggle('hidden')">
             <div class="flex items-center gap-3 min-w-0 flex-1">
-              <div class="w-7 h-7 rounded-full bg-indigo-700 text-white text-xs font-bold flex items-center justify-center shrink-0">
+              <div class="w-7 h-7 rounded-full bg-purple-700 text-white text-xs font-bold flex items-center justify-center shrink-0">
                 ${idx + 1}
               </div>
               <div class="font-bold text-stone-900 text-xs truncate max-w-[200px]" title="${c.email}">${c.email}</div>
             </div>
-            <button class="font-mono font-extrabold text-indigo-200 text-xs shrink-0 ml-2 bg-indigo-900/60 hover:bg-indigo-850 px-3 py-1.5 rounded-xl border border-indigo-800/40 transition flex items-center gap-1">
+            <button class="font-mono font-extrabold text-purple-900 text-xs shrink-0 ml-2 bg-purple-200/80 hover:bg-purple-300 px-3 py-1.5 rounded-xl border border-purple-300 transition flex items-center gap-1">
               <span>${c.created_count.toLocaleString()}개 에이전트 목록</span>
               <span class="text-[10px]">▼</span>
             </button>
           </div>
-          <div id="${listId}" class="hidden mt-3 p-3 bg-indigo-950/90 text-white rounded-xl border border-indigo-900 space-y-1.5 max-h-48 overflow-y-auto shadow-inner">
-            <div class="text-[11px] font-extrabold text-indigo-300 mb-1.5 pb-1 border-b border-indigo-900 flex items-center justify-between">
+          <div id="${listId}" class="hidden mt-3 p-3 bg-purple-950/95 text-white rounded-xl border border-purple-800 space-y-1.5 max-h-48 overflow-y-auto shadow-inner">
+            <div class="text-[11px] font-extrabold text-purple-300 mb-1.5 pb-1 border-b border-purple-800 flex items-center justify-between">
               <span>🛠️ ${c.email} 생성 에이전트 목록 (${agList.length}개)</span>
-              <span class="text-[9px] text-indigo-400">Scrollable List</span>
+              <span class="text-[9px] text-purple-400">Scrollable List</span>
             </div>
             <div class="space-y-1.5">
               ${agItemsHtml}

@@ -390,16 +390,21 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             with open(os.path.join(SCRIPT_DIR, 'index.html'), 'rb') as f:
                 self.wfile.write(f.read())
             return
-        elif path == "/lg_logo.png":
-            try:
-                self.send_response(200)
-                self.send_header('Content-Type', 'image/png')
-                self.end_headers()
-                with open(os.path.join(SCRIPT_DIR, 'lg_logo.png'), 'rb') as f:
-                    self.wfile.write(f.read())
-            except:
-                self.send_response(404)
-                self.end_headers()
+        elif path.endswith(".png"):
+            filename = path.lstrip("/")
+            file_path = os.path.join(SCRIPT_DIR, filename)
+            if os.path.exists(file_path):
+                try:
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'image/png')
+                    self.end_headers()
+                    with open(file_path, 'rb') as f:
+                        self.wfile.write(f.read())
+                    return
+                except:
+                    pass
+            self.send_response(404)
+            self.end_headers()
             return
         elif path == "/api/projects":
             self.send_json(get_real_gcp_projects())
@@ -650,7 +655,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                     timeline_map[d_str] = {}
                 timeline_map[d_str][clean_cat] = timeline_map[d_str].get(clean_cat, 0) + toks
 
-            colors = ['#3a4d6b', '#665c8f', '#407a67', '#bfa15f', '#3f8899', '#2b5c8f', '#475569', '#64748b', '#a85f40', '#4f46e5', '#334155']
+            colors = ['#2563eb', '#9333ea', '#ea580c', '#06b6d4', '#16a34a', '#ec4899', '#f59e0b', '#6366f1', '#8b5cf6', '#14b8a6', '#f43f5e']
             dynamic_models = []
             summaries = []
 
