@@ -738,6 +738,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 max_spike_pct = 0.0
 
                 temp_d = curr
+                spike_date = None
                 while temp_d <= block_end:
                     d_str = str(temp_d)
                     d_cost = timeline_rows.get(d_str, 0.0)
@@ -748,6 +749,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                         if c_pct >= 50.0:
                             block_is_spike = True
                             max_spike_pct = max(max_spike_pct, c_pct)
+                            spike_date = temp_d
 
                     prev_cost = d_cost
                     temp_d += datetime.timedelta(days=1)
@@ -758,16 +760,81 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 label = str(curr) if step_days == 1 else f"{curr.strftime('%m/%d')}~{block_end.strftime('%m/%d')}"
                 
                 if block_is_spike:
+                    driver_desc = "LLM API 호출 급증"
+                    chpts = [
+                        "⚠️ 특정 대용량 LLM 배치 처리 작업 또는 백그라운드 인덱싱 작업 실행 여부 확인",
+                        "⚠️ GCP Billing Budget Alert 초과 알림 수신 및 프로젝트 쿼터(Quota) 한도 설정 점검",
+                        "⚠️ 에이전트/클라이언트 앱의 무한 반복 API 호출(Loop Exception) 모니터링"
+                    ]
+                    
+                    if spike_date:
+                        try:
+                            # 💡 BQ Query to get SKU comparison for the spike date
+                            sql_spike_skus = f"""
+                            SELECT
+                              sku.description as sku_name,
+                              SUM(CASE WHEN DATE(usage_start_time) = '{spike_date}' THEN cost ELSE 0 END) as cost_curr,
+                              SUM(CASE WHEN DATE(usage_start_time) = '{spike_date - datetime.timedelta(days=1)}' THEN cost ELSE 0 END) as cost_prev
+                            FROM `{PROJECT_ID}.{BILLING_DATASET}.{BILLING_TABLE}`
+                            WHERE DATE(usage_start_time) IN ('{spike_date}', '{spike_date - datetime.timedelta(days=1)}')
+                              {proj_filter_sql}
+                            GROUP BY sku_name
+                            """
+                            spike_sku_rows = list(client.query(sql_spike_skus).result())
+                            
+                            rising_skus = []
+                            for sr in spike_sku_rows:
+                                diff_val = sr['cost_curr'] - sr['cost_prev']
+                                if diff_val > 0.01:
+                                    rising_skus.append({
+                                        "sku": sr['sku_name'],
+                                        "cost_prev": round(sr['cost_prev'], 4),
+                                        "cost_curr": round(sr['cost_curr'], 4),
+                                        "increase": round(diff_val, 4)
+                                    })
+                            rising_skus.sort(key=lambda x: x['increase'], reverse=True)
+                            
+                            if rising_skus:
+                                import google.genai as genai
+                                client_genai = genai.Client()
+                                prompt_gemini = f"""
+                                You are a Cloud FinOps Expert analyzing a cost spike on a Google Cloud Platform billing project.
+                                Compare the LLM SKU costs on {spike_date} (current day) versus {spike_date - datetime.timedelta(days=1)} (previous day).
+
+                                Here is the list of SKUs that had a cost increase (sorted by increase amount):
+                                {json.dumps(rising_skus[:5], ensure_ascii=False, indent=2)}
+
+                                Please write:
+                                1. Primary Driver (primaryDriver): A clear, single-sentence Korean summary of the main reason for the spike, mentioning the top SKU that increased and the increase amount. (Example: "Gemini 1.5 Pro Input Tokens SKU 비용이 전일 대비 $15.42 급증한 것이 주 원인입니다.")
+                                2. Checkpoints (checkpoints): An array of 3 actionable, specific checkpoints (in Korean, starting with '⚠️') to inspect. Make them tailored to the specific SKU that increased (e.g. if input tokens increased, suggest checking prompt lengths, system instructions, or context caching; if output tokens increased, check max output token settings or infinite loop response detection; if Model Armor filter rules triggered cost spikes, suggest inspecting security policies).
+
+                                Return ONLY a raw JSON object with keys:
+                                "primaryDriver": "string",
+                                "checkpoints": ["string", "string", "string"]
+
+                                Do NOT include markdown, code blocks (such as ```json), or backticks. Return the raw JSON string directly.
+                                """
+                                response_genai = client_genai.models.generate_content(
+                                    model='gemini-2.5-flash',
+                                    contents=prompt_gemini
+                                )
+                                txt_res = response_genai.text.strip()
+                                if txt_res.startswith("```"):
+                                    txt_res = txt_res.split("```")[1]
+                                    if txt_res.startswith("json"):
+                                        txt_res = txt_res[4:]
+                                analysis_data = json.loads(txt_res.strip())
+                                driver_desc = analysis_data.get("primaryDriver", driver_desc)
+                                chpts = analysis_data.get("checkpoints", chpts)
+                        except Exception as ex_gem:
+                            print("Failed to run Gemini cost spike analysis, falling back to static defaults:", ex_gem)
+
                     spike_reports.append({
                         "date": label,
                         "costUsd": block_sum,
                         "spikePct": max_spike_pct if max_spike_pct > 0 else 55.2,
-                        "primaryDriver": "LLM API 호출 급증",
-                        "checkpoints": [
-                            "⚠️ 특정 대용량 LLM 배치 처리 작업 또는 백그라운드 인덱싱 작업 실행 여부 확인",
-                            "⚠️ GCP Billing Budget Alert 초과 알림 수신 및 프로젝트 쿼터(Quota) 한도 설정 점검",
-                            "⚠️ 에이전트/클라이언트 앱의 무한 반복 API 호출(Loop Exception) 모니터링"
-                        ]
+                        "primaryDriver": driver_desc,
+                        "checkpoints": chpts
                     })
 
                 cost_timeline.append({
