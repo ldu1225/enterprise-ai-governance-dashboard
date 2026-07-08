@@ -144,6 +144,15 @@ BILLING_DATASET = os.environ.get("BILLING_DATASET_ID", SYS_CONFIG.get("billing_d
 BILLING_TABLE = os.environ.get("BILLING_TABLE_ID", SYS_CONFIG.get("billing_table_id", "gcp_billing_export_resource_v1_your_billing_account"))
 BILLING_ACCOUNT_ID = os.environ.get("BILLING_ACCOUNT_ID", SYS_CONFIG.get("billing_account_id", "your-billing-account-id"))
 
+def get_genai_client():
+    import google.genai as genai
+    if PROJECT_ID:
+        try:
+            return genai.Client(vertexai=True, project=PROJECT_ID)
+        except Exception as e:
+            print(f"[GenAI Client Warning] Vertex AI initialization failed: {e}")
+    return genai.Client()
+
 socketserver.TCPServer.allow_reuse_address = True
 
 # 글로벌 토큰 및 성능 최적화 캐시
@@ -191,8 +200,7 @@ def llm_reconcile_sa_models(sa_list, billing_models):
         return []
     
     try:
-        import google.genai as genai
-        client = genai.Client()
+        client = get_genai_client()
         prompt = f"""
         You are a GCP AI Governance Analyst.
         Reconcile the following Real Service Accounts (from Audit Logs) with Real Active LLM Models (from GCP Billing Export).
@@ -793,10 +801,10 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                                         "increase": round(diff_val, 4)
                                     })
                             rising_skus.sort(key=lambda x: x['increase'], reverse=True)
+                            print(f"[FinOps Debug] spike_date={spike_date}, rising_skus count={len(rising_skus)}, content={rising_skus}")
                             
                             if rising_skus:
-                                import google.genai as genai
-                                client_genai = genai.Client()
+                                client_genai = get_genai_client()
                                 prompt_gemini = f"""
                                 You are a Cloud FinOps Expert analyzing a cost spike on a Google Cloud Platform billing project.
                                 Compare the LLM SKU costs on {spike_date} (current day) versus {spike_date - datetime.timedelta(days=1)} (previous day).
