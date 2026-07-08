@@ -801,7 +801,9 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                                         "increase": round(diff_val, 4)
                                     })
                             rising_skus.sort(key=lambda x: x['increase'], reverse=True)
+                            import sys
                             print(f"[FinOps Debug] spike_date={spike_date}, rising_skus count={len(rising_skus)}, content={rising_skus}")
+                            sys.stdout.flush()
                             
                             if rising_skus:
                                 client_genai = get_genai_client()
@@ -835,7 +837,9 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                                 driver_desc = analysis_data.get("primaryDriver", driver_desc)
                                 chpts = analysis_data.get("checkpoints", chpts)
                         except Exception as ex_gem:
+                            import sys
                             print("Failed to run Gemini cost spike analysis, falling back to static defaults:", ex_gem)
+                            sys.stdout.flush()
 
                     spike_reports.append({
                         "date": label,

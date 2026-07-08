@@ -13,4 +13,4 @@ COPY src/ /app/src/
 
 EXPOSE 8080
 
-CMD ["python3", "src/backend_server.py"]
+CMD ["python3", "-u", "src/backend_server.py"]
