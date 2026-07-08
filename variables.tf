@@ -44,3 +44,9 @@ variable "dashboard_subtitle" {
   default     = "AI Governance & Agent Platform Dashboard"
   description = "대시보드 부 타이틀 명칭"
 }
+
+variable "dashboard_service_name" {
+  type        = string
+  default     = "lges-dashboard"
+  description = "Cloud Run에 배포할 대시보드 서비스의 고유 명칭"
+}

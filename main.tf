@@ -37,7 +37,7 @@ resource "google_project_iam_member" "bq_job_user" {
 
 # 3. Google Cloud Run v2 서비스 생성 (Pre-built 이미지 기반 기동)
 resource "google_cloud_run_v2_service" "dashboard" {
-  name     = "ai-governance-dashboard"
+  name     = var.dashboard_service_name
   location = var.region
   project  = var.project_id
 
