@@ -650,7 +650,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                     timeline_map[d_str] = {}
                 timeline_map[d_str][clean_cat] = timeline_map[d_str].get(clean_cat, 0) + toks
 
-            colors = ['#2563eb', '#9333ea', '#ea580c', '#06b6d4', '#16a34a', '#ec4899', '#f59e0b', '#6366f1', '#8b5cf6', '#14b8a6', '#f43f5e']
+            colors = ['#3a4d6b', '#665c8f', '#407a67', '#bfa15f', '#3f8899', '#2b5c8f', '#475569', '#64748b', '#a85f40', '#4f46e5', '#334155']
             dynamic_models = []
             summaries = []
 

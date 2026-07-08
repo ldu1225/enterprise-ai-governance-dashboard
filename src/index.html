@@ -19,17 +19,43 @@
   <style>
     body {
       font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
-      background-color: #f6f6f2;
-      color: #1c1917;
+      background-color: #0f172a !important; /* Dark Slate-900 */
+      color: #f8fafc !important; /* Light Slate-50 */
     }
     .card-crextio {
-      background: #ffffff;
+      background: #1e293b !important; /* Dark Slate-800 */
       border-radius: 28px;
-      box-shadow: 0 4px 24px -4px rgba(0, 0, 0, 0.03), 0 2px 8px -2px rgba(0, 0, 0, 0.02);
-      border: 1px solid #f0f0eb;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3) !important;
+      border: 1px solid #334155 !important; /* Slate-700 */
+    }
+    
+    /* Global Overrides for White backgrounds to Dark Slate-800 */
+    .bg-white {
+      background-color: #1e293b !important;
+      color: #f8fafc !important;
+      border-color: #334155 !important;
+    }
+    
+    /* Text Color Overrides for Deep Theme */
+    .text-stone-900, .text-stone-850, .text-stone-800, .text-stone-700 {
+      color: #ffffff !important;
+    }
+    .text-stone-600, .text-stone-500, .text-stone-400 {
+      color: #94a3b8 !important; /* Cool Slate-400 */
+    }
+    
+    /* Border Color Overrides */
+    .border-stone-200, .border-stone-300, .border-stone-100 {
+      border-color: #334155 !important;
+    }
+    .border-b {
+      border-bottom-color: #334155 !important;
+    }
+    .bg-stone-50, .bg-stone-100 {
+      background-color: #0f172a !important;
     }
     .btn-crextio-black {
-      background-color: #1c1917;
+      background-color: #4f46e5;
       color: #ffffff;
       border-radius: 9999px;
       padding: 8px 18px;
@@ -38,7 +64,7 @@
       transition: all 0.2s ease;
     }
     .btn-crextio-black:hover {
-      background-color: #292524;
+      background-color: #4338ca;
     }
     .custom-table {
       width: 100%;
@@ -46,17 +72,17 @@
       font-size: 0.85rem;
     }
     .custom-table th {
-      background: #fafaf9;
-      color: #78716c;
+      background: #0f172a !important; /* Deep Dark Slate-900 */
+      color: #94a3b8 !important; /* Cool Slate-400 */
       font-weight: 600;
       padding: 14px 18px;
       text-align: left;
-      border-bottom: 1px solid #f0f0eb;
+      border-bottom: 1px solid #334155 !important; /* Slate-700 */
     }
     .custom-table td {
       padding: 14px 18px;
-      border-bottom: 1px solid #f5f5f4;
-      color: #1c1917;
+      border-bottom: 1px solid #334155 !important;
+      color: #cbd5e1 !important; /* Cool Slate-300 */
     }
     .badge-crextio {
       display: inline-flex;
@@ -175,7 +201,7 @@
   <!-- Header Section -->
   <header class="flex flex-wrap justify-between items-center gap-4 border-b border-stone-200/80 pb-6">
     <div class="flex items-center gap-4">
-      <div class="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center bg-white border border-stone-200 shadow-sm">
+      <div class="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center border border-stone-200 shadow-sm" style="background-color: #ffffff !important;">
         <img src="/lg_logo.png" alt="LG Logo" class="w-9 h-9 object-contain" onerror="this.onerror=null; this.src='https://www.lgensol.com/favicon.ico';" />
       </div>
       <div>
@@ -195,10 +221,10 @@
       </div>
 
       <div class="flex items-center gap-1 bg-white p-1 rounded-full border border-stone-300 shadow-sm">
-        <button onclick="setDateDays(7)" id="btn-d-7" class="px-3.5 py-1.5 text-xs font-bold rounded-full bg-[#1c1917] text-white">최근 7일</button>
-        <button onclick="setDateDays(14)" id="btn-d-14" class="px-3.5 py-1.5 text-xs font-bold rounded-full text-stone-600">최근 14일</button>
-        <button onclick="setDateDays(30)" id="btn-d-30" class="px-3.5 py-1.5 text-xs font-bold rounded-full text-stone-600">최근 30일</button>
-        <button onclick="openCustomDateModal()" id="btn-custom-modal-trigger" class="px-3.5 py-1.5 text-xs font-bold rounded-full text-stone-700 bg-stone-100 hover:bg-stone-200">📅 커스텀</button>
+        <button onclick="setDateDays(7)" id="btn-d-7" class="px-3.5 py-1.5 text-xs font-bold rounded-full bg-indigo-600 text-white">최근 7일</button>
+        <button onclick="setDateDays(14)" id="btn-d-14" class="px-3.5 py-1.5 text-xs font-bold rounded-full text-slate-400 hover:text-slate-200">최근 14일</button>
+        <button onclick="setDateDays(30)" id="btn-d-30" class="px-3.5 py-1.5 text-xs font-bold rounded-full text-slate-400 hover:text-slate-200">최근 30일</button>
+        <button onclick="openCustomDateModal()" id="btn-custom-modal-trigger" class="px-3.5 py-1.5 text-xs font-bold rounded-full text-slate-300 bg-slate-800 hover:bg-slate-700">📅 커스텀</button>
       </div>
 
       <button onclick="openVersionModal()" class="flex items-center gap-1.5 bg-stone-900 hover:bg-stone-800 text-white px-3.5 py-2 rounded-full text-xs font-bold transition shadow-sm">
@@ -857,12 +883,12 @@
       ['7', '14', '30'].forEach(d => {
         const btn = document.getElementById('btn-d-' + d);
         if (btn) {
-          btn.className = (parseInt(d) === days) ? "px-3.5 py-1.5 text-xs font-bold rounded-full bg-[#1c1917] text-white" : "px-3.5 py-1.5 text-xs font-bold rounded-full text-stone-600";
+          btn.className = (parseInt(d) === days) ? "px-3.5 py-1.5 text-xs font-bold rounded-full bg-indigo-600 text-white" : "px-3.5 py-1.5 text-xs font-bold rounded-full text-slate-400 hover:text-slate-200";
         }
       });
       const cBtn = document.getElementById('btn-custom-modal-trigger');
       if (cBtn) {
-        cBtn.className = "px-3.5 py-1.5 text-xs font-bold rounded-full text-stone-700 bg-stone-100 hover:bg-stone-200";
+        cBtn.className = "px-3.5 py-1.5 text-xs font-bold rounded-full text-slate-300 bg-slate-800 hover:bg-slate-700";
         cBtn.innerText = "📅 커스텀";
       }
       fetchDashboardData();
@@ -902,11 +928,11 @@
         activeDays = null;
         ['7', '14', '30'].forEach(d => {
           const btn = document.getElementById('btn-d-' + d);
-          if (btn) btn.className = "px-3.5 py-1.5 text-xs font-bold rounded-full text-stone-600";
+          if (btn) btn.className = "px-3.5 py-1.5 text-xs font-bold rounded-full text-slate-400 hover:text-slate-200";
         });
         const cBtn = document.getElementById('btn-custom-modal-trigger');
         if (cBtn) {
-          cBtn.className = "px-3.5 py-1.5 text-xs font-bold rounded-full bg-[#1c1917] text-white";
+          cBtn.className = "px-3.5 py-1.5 text-xs font-bold rounded-full bg-indigo-600 text-white";
           cBtn.innerText = `📅 ${sVal}~${eVal}`;
         }
         closeCustomDateModal();
@@ -1160,8 +1186,8 @@
             }
           },
           scales: {
-            x: { grid: { display: false } },
-            y: { grid: { color: '#f0f0eb' }, beginAtZero: true }
+            x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
+            y: { grid: { color: '#334155' }, beginAtZero: true, ticks: { color: '#94a3b8' } }
           }
         }
       });
@@ -1224,8 +1250,8 @@
             }
           },
           scales: {
-            x: { stacked: true, grid: { display: false } },
-            y: { stacked: true, grid: { color: '#f0f0eb' }, ticks: { precision: 0 } }
+            x: { stacked: true, grid: { display: false }, ticks: { color: '#94a3b8' } },
+            y: { stacked: true, grid: { color: '#334155' }, ticks: { precision: 0, color: '#94a3b8' } }
           }
         }
       });
@@ -1281,10 +1307,11 @@
             legend: { display: false }
           },
           scales: {
-            x: { grid: { display: false } },
+            x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
             y: { 
-              grid: { color: '#f0f0eb' },
+              grid: { color: '#334155' },
               ticks: {
+                color: '#94a3b8',
                 callback: function(value) { return '$' + value; }
               }
             }
@@ -1436,7 +1463,7 @@
           datasets: [{
             label: '신규 에이전트 생성 수',
             data: creationData,
-            backgroundColor: '#8b5cf6',
+            backgroundColor: '#6366f1',
             borderRadius: 8
           }]
         },
@@ -1445,8 +1472,8 @@
           maintainAspectRatio: false,
           plugins: { legend: { display: false } },
           scales: {
-            x: { grid: { display: false } },
-            y: { grid: { color: '#f0f0eb' }, ticks: { precision: 0 } }
+            x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
+            y: { grid: { color: '#334155' }, ticks: { precision: 0, color: '#94a3b8' } }
           }
         }
       });
@@ -1463,12 +1490,12 @@
 
       currentData.agentCreatorsRanking.forEach((c, idx) => {
         const itemContainer = document.createElement('div');
-        itemContainer.className = "rounded-2xl bg-purple-50 border border-purple-100 p-3.5 transition hover:border-purple-300";
+        itemContainer.className = "rounded-2xl bg-indigo-950/20 border border-indigo-900/40 p-3.5 transition hover:border-indigo-700/50";
         
         const listId = `creator-agents-list-${idx}`;
         const agList = c.created_agents || ["LGES_BATTERY_RAG_AGENT", "GEMINI_CODE_ASSIST_ADK", "NEWS_SUMMARIZER_BOT"];
         const agItemsHtml = agList.map(a => `
-          <div class="flex items-center gap-2 text-xs text-purple-100 bg-purple-900/60 px-2.5 py-1.5 rounded-lg border border-purple-700/50">
+          <div class="flex items-center gap-2 text-xs text-indigo-200 bg-indigo-900/40 px-2.5 py-1.5 rounded-lg border border-indigo-800/40">
             <span>🤖</span> <span class="font-bold font-mono">${a}</span>
           </div>
         `).join('');
@@ -1476,20 +1503,20 @@
         itemContainer.innerHTML = `
           <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('${listId}').classList.toggle('hidden')">
             <div class="flex items-center gap-3 min-w-0 flex-1">
-              <div class="w-7 h-7 rounded-full bg-purple-700 text-white text-xs font-bold flex items-center justify-center shrink-0">
+              <div class="w-7 h-7 rounded-full bg-indigo-700 text-white text-xs font-bold flex items-center justify-center shrink-0">
                 ${idx + 1}
               </div>
               <div class="font-bold text-stone-900 text-xs truncate max-w-[200px]" title="${c.email}">${c.email}</div>
             </div>
-            <button class="font-mono font-extrabold text-purple-900 text-xs shrink-0 ml-2 bg-purple-200/80 hover:bg-purple-300 px-3 py-1.5 rounded-xl border border-purple-300 transition flex items-center gap-1">
+            <button class="font-mono font-extrabold text-indigo-200 text-xs shrink-0 ml-2 bg-indigo-900/60 hover:bg-indigo-850 px-3 py-1.5 rounded-xl border border-indigo-800/40 transition flex items-center gap-1">
               <span>${c.created_count.toLocaleString()}개 에이전트 목록</span>
               <span class="text-[10px]">▼</span>
             </button>
           </div>
-          <div id="${listId}" class="hidden mt-3 p-3 bg-purple-950/95 text-white rounded-xl border border-purple-800 space-y-1.5 max-h-48 overflow-y-auto shadow-inner">
-            <div class="text-[11px] font-extrabold text-purple-300 mb-1.5 pb-1 border-b border-purple-800 flex items-center justify-between">
+          <div id="${listId}" class="hidden mt-3 p-3 bg-indigo-950/90 text-white rounded-xl border border-indigo-900 space-y-1.5 max-h-48 overflow-y-auto shadow-inner">
+            <div class="text-[11px] font-extrabold text-indigo-300 mb-1.5 pb-1 border-b border-indigo-900 flex items-center justify-between">
               <span>🛠️ ${c.email} 생성 에이전트 목록 (${agList.length}개)</span>
-              <span class="text-[9px] text-purple-400">Scrollable List</span>
+              <span class="text-[9px] text-indigo-400">Scrollable List</span>
             </div>
             <div class="space-y-1.5">
               ${agItemsHtml}
