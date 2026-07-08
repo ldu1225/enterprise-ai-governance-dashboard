@@ -28,7 +28,24 @@ from google.cloud import bigquery
 # ==============================================================================
 # 1. config.yaml 환경설정 동적 로드 로직
 # ==============================================================================
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.yaml")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def get_config_path():
+    # 1) 로컬 스크립트 실행 경로 기준 (동일 폴더)
+    p1 = os.path.join(SCRIPT_DIR, "config.yaml")
+    if os.path.exists(p1):
+        return p1
+    # 2) 상위 폴더 기준 (src/ 폴더 내부에서 구동될 때 상위 루트 폴더 조회)
+    p2 = os.path.join(SCRIPT_DIR, "..", "config.yaml")
+    if os.path.exists(p2):
+        return p2
+    # 3) 현재 작업 디렉토리 기준
+    p3 = os.path.join(os.getcwd(), "config.yaml")
+    if os.path.exists(p3):
+        return p3
+    return p1  # 기본값으로 첫 번째 경로 지정
+
+CONFIG_FILE = get_config_path()
 
 def load_config():
     """config.yaml 파일에서 설정값을 읽어옵니다. (없거나 오류 시 기본값 적용)"""
@@ -312,7 +329,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.end_headers()
-            with open('index.html', 'rb') as f:
+            with open(os.path.join(SCRIPT_DIR, 'index.html'), 'rb') as f:
                 self.wfile.write(f.read())
             return
         elif path == "/lg_logo.png":
@@ -320,7 +337,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header('Content-Type', 'image/png')
                 self.end_headers()
-                with open('lg_logo.png', 'rb') as f:
+                with open(os.path.join(SCRIPT_DIR, 'lg_logo.png'), 'rb') as f:
                     self.wfile.write(f.read())
             except:
                 self.send_response(404)
