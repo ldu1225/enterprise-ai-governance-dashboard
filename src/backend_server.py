@@ -1763,6 +1763,17 @@ You have 100% COMPLETE AUTHORITATIVE ACCESS to ALL 6 BigQuery Datasets used acro
 
 4. 💬 Gemini Enterprise & Assistant User Messages Dataset:
    - Table: `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gen_ai_user_message`
+   - Schema: `timestamp` (TIMESTAMP), `trace` (STRING - session trace ID), `jsonPayload` (JSON containing message text content parts)
+
+5. 📂 Gemini Enterprise User Activity Dataset:
+   - Table: `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity`
+   - Schema: `timestamp` (TIMESTAMP), `trace` (STRING), `jsonPayload.useriamprincipal` (STRING - user email), `jsonPayload.response.assistToken` (STRING)
+
+6. 📂 User File Uploads Audit View:
+   - Join `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gen_ai_user_message` `m` with `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity` `a` on `m.trace = a.trace`.
+   - Filter user-uploaded files where: `JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.content.parts[1].text') LIKE '%<start_of_user_uploaded_file%'`.
+   - The user email is: `COALESCE(JSON_EXTRACT_SCALAR(TO_JSON_STRING(a.jsonPayload), '$.useriamprincipal'), 'user@company.com')`.
+   - The uploaded file name tag is in: `JSON_EXTRACT_SCALAR(TO_JSON_STRING(m.jsonPayload), '$.content.parts[1].text')` (which contains `<start_of_user_uploaded_file: filename.extension>`).
 
 CRITICAL INSTRUCTIONS FOR SQL GENERATION:
 1. Whenever asked about User Ranking, Prompt Callers, or top users:
@@ -1875,17 +1886,102 @@ CRITICAL INSTRUCTIONS FOR SQL GENERATION:
 
         # 2. BigQuery Data Query Execution Mode (When Gemini generates SQL)
         generated_sql = generated_sql.strip('`').replace('```sql', '').replace('```', '').strip()
-        generated_sql = re.sub(r'TIMESTAMP_SUB\(([^,]+),\s*INTERVAL\s*(\d+)\s*MONTH\)', r'TIMESTAMP_SUB(\1, INTERVAL \2*30 DAY)', generated_sql, flags=re.IGNORECASE)
-        generated_sql = re.sub(r'TIMESTAMP_SUB\(([^,]+),\s*INTERVAL\s*1\s*MONTH\)', r'TIMESTAMP_SUB(\1, INTERVAL 30 DAY)', generated_sql, flags=re.IGNORECASE)
+        
+        # Self-healing loop: try up to 3 times
+        max_attempts = 3
+        attempt = 1
+        last_error = None
+        rows = []
+        headers = []
+        table_rows = []
+        
+        while attempt <= max_attempts:
+            current_sql = generated_sql
+            current_sql = re.sub(r'TIMESTAMP_SUB\(([^,]+),\s*INTERVAL\s*(\d+)\s*MONTH\)', r'TIMESTAMP_SUB(\1, INTERVAL \2*30 DAY)', current_sql, flags=re.IGNORECASE)
+            current_sql = re.sub(r'TIMESTAMP_SUB\(([^,]+),\s*INTERVAL\s*1\s*MONTH\)', r'TIMESTAMP_SUB(\1, INTERVAL 30 DAY)', current_sql, flags=re.IGNORECASE)
+            
+            try:
+                print(f"[Self-Heal] Executing SQL (Attempt {attempt}/{max_attempts}):\n{current_sql}", flush=True)
+                query_job = client.query(current_sql)
+                rows = list(query_job.result())
+                headers = [field.name for field in query_job.result().schema] if rows else []
+                table_rows = []
+                for r in rows:
+                    table_rows.append([str(r[h]) for h in headers])
+                
+                # Succeeded! Clear any previous error and break
+                last_error = None
+                print(f"[Self-Heal] SQL executed successfully on attempt {attempt}.", flush=True)
+                generated_sql = current_sql
+                break
+                
+            except Exception as err_exec:
+                last_error = err_exec
+                print(f"[Self-Heal] SQL execution failed on attempt {attempt}. Error: {err_exec}", flush=True)
+                
+                if attempt == max_attempts:
+                    break
+                    
+                attempt += 1
+                try:
+                    fix_prompt = f"""
+                    You are a BigQuery SQL Debugger.
+                    The SQL query you generated for the user question: "{user_q}" failed to execute.
+                    
+                    Failed SQL:
+                    {current_sql}
+                    
+                    BigQuery Error Message:
+                    {str(err_exec)}
+                    
+                    Please review the error message and the failed SQL.
+                    Identify the mistake (e.g. unrecognized column name, incorrect table path, incorrect date function syntax).
+                    Then write a corrected, valid BigQuery Standard SQL query.
+                    
+                    Refer to the available tables and their schemas:
+                    1. Detailed Billing: `{PROJECT_ID}.{BILLING_DATASET}.{BILLING_TABLE}`
+                       Schema: usage_start_time, sku.description, usage.amount, cost, service.description
+                    2. Model Armor: `{PROJECT_ID}.{DATASET_ID}.modelarmor_googleapis_com_sanitize_operations`
+                    3. User Audit Activity: `{PROJECT_ID}.{DATASET_ID}.cloudaudit_googleapis_com_activity`
+                    4. Gen AI User Message (Files/Chat messages): `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gen_ai_user_message`
+                       Schema: timestamp, trace, jsonPayload
+                    5. Gemini Enterprise User Activity: `{PROJECT_ID}.{DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity`
+                       Schema: timestamp, trace, jsonPayload
+                    
+                    Return ONLY the corrected SQL query as a raw string.
+                    Do NOT wrap in markdown, code blocks (```sql), or backticks. Return the SQL query text directly.
+                    """
+                    
+                    url_gem = f"https://aiplatform.googleapis.com/v1/projects/{PROJECT_ID}/locations/global/publishers/google/models/gemini-3.5-flash:generateContent"
+                    headers_gem = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+                    body_gem = {
+                        "contents": [{"role": "user", "parts": [{"text": fix_prompt}]}],
+                        "generationConfig": {"temperature": 0.1}
+                    }
+                    
+                    req_gem = urllib.request.Request(url_gem, data=json.dumps(body_gem).encode('utf-8'), headers=headers_gem)
+                    with urllib.request.urlopen(req_gem, timeout=15) as resp_gem:
+                        data_gem = json.loads(resp_gem.read().decode('utf-8'))
+                        new_sql = data_gem['candidates'][0]['content']['parts'][0]['text'].strip()
+                        
+                        new_sql = new_sql.strip('`').replace('```sql', '').replace('```', '').strip()
+                        generated_sql = new_sql
+                        print(f"[Self-Heal] Gemini generated corrected SQL:\n{generated_sql}", flush=True)
+                except Exception as err_gem_fix:
+                    print(f"[Self-Heal] Failed to call Gemini for SQL fix: {err_gem_fix}", flush=True)
+                    break
+
+        if last_error:
+            print("BigQuery SQL execution failed after all self-healing attempts:", last_error)
+            self.send_json({
+                "answerText": "BigQuery 데이터 조회 중 문제가 발생했습니다. 질문이 다소 모호하거나 필요한 데이터 컬럼명이 일치하지 않을 수 있습니다. 찾으시는 파일명이나 조회 기간 등 구체적인 정보를 제공해 주시면 다시 쿼리를 분석해 드리겠습니다!",
+                "executedSql": generated_sql,
+                "tableHeaders": ["Status"],
+                "tableRows": [["Execution Error"]]
+            })
+            return
 
         try:
-            query_job = client.query(generated_sql)
-            rows = list(query_job.result())
-            headers = [field.name for field in query_job.result().schema] if rows else []
-            table_rows = []
-            for r in rows:
-                table_rows.append([str(r[h]) for h in headers])
-
             chart_labels = []
             chart_values = []
             
@@ -1948,10 +2044,10 @@ CRITICAL INSTRUCTIONS FOR SQL GENERATION:
                 "chartValues": chart_values,
                 "suggestedQuestions": suggested_questions
             })
-        except Exception as err_exec:
-            print("BigQuery SQL execution error in AI Chatbot:", err_exec)
+        except Exception as err_final:
+            print("Error in finalizing chatbot response:", err_final)
             self.send_json({
-                "answerText": f"BigQuery 쿼리 실행 결과: {str(err_exec)}",
+                "answerText": "응답을 구성하는 중 예상치 못한 오류가 발생했습니다.",
                 "executedSql": generated_sql,
                 "tableHeaders": ["Status"],
                 "tableRows": [["Execution Error"]]
