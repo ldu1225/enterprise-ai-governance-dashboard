@@ -167,6 +167,54 @@ def llm_group_skus_via_gemini(sku_list):
     if not sku_list:
         return {}
     
+    # 1. Try dynamic grouping via Gemini 3.5 Flash
+    try:
+        client = get_genai_client()
+        prompt = f"""
+        You are a GCP Billing Analyst.
+        Group the following raw Billing SKU description strings into their representative model/service names.
+        We want to merge different input/output/caching/image/video/text variants of the same model service.
+
+        Raw SKU List:
+        {json.dumps(sku_list, ensure_ascii=False)}
+
+        Guidelines for grouping:
+        - All variants of "Gemini Omni Flash" (Image Input, Text Input, Text Output, etc.) should map to "Gemini Omni Flash".
+        - All variants of "Veo" (Video Generation, Veo 2, Veo 3.1, etc.) should map to "Veo Video Generation".
+        - All variants of "Claude 3.5" or "Claude Sonnet 4.5" (Input cache, output, etc.) should map to "Claude Sonnet 4.5".
+        - All variants of "Imagen" (Image generation, edit, etc.) should map to "Imagen Image Generation".
+        - All variants of "Gemini 3.5 Flash" should map to "Gemini 3.5 Flash".
+        - All variants of "Gemini 3.1 Flash" or "3.1 Flash Lite" should map to "Gemini 3.1 Flash Lite".
+        - All variants of "Gemini 3.0 Pro" or "Gemini 3 Pro" should map to "Gemini 3.0 Pro".
+        - All variants of "Gemini 2.5 Flash" should map to "Gemini 2.5 Flash".
+        - All variants of "Chirp" should map to "Chirp Speech Generation".
+        - If a SKU is not an LLM/GenAI model (e.g. Compute Engine, Cloud Run CPU, Cloud Workstations), map it to its service name (like "Compute Engine", "Cloud Run", "Cloud Workstations") or keep it as is.
+
+        Return ONLY a JSON object mapping each raw SKU description string to its matched group name:
+        {{
+          "raw_sku": "Group Name"
+        }}
+        Do NOT wrap in markdown, backticks, or code blocks.
+        """
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt
+        )
+        txt = response.text.strip()
+        if txt.startswith("```"):
+            txt = txt.split("```")[1]
+            if txt.startswith("json"):
+                txt = txt[4:]
+        import sys
+        print("[FinOps] SKU grouping via Gemini completed successfully.")
+        sys.stdout.flush()
+        return json.loads(txt.strip())
+    except Exception as e:
+        import sys
+        print("Failed to group SKUs via Gemini, falling back to static rules:", e)
+        sys.stdout.flush()
+
+    # 2. Fallback static grouping rules
     mapping = {}
     for s in sku_list:
         sl = s.lower()
@@ -184,6 +232,8 @@ def llm_group_skus_via_gemini(sku_list):
             mapping[s] = 'Gemini 3.0 Pro'
         elif 'gemini 2.5' in sl:
             mapping[s] = 'Gemini 2.5 Flash'
+        elif 'omni flash' in sl:
+            mapping[s] = 'Gemini Omni Flash'
         elif 'code assist' in sl:
             continue
         elif 'chirp' in sl:
