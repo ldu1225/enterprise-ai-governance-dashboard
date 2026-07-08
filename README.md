@@ -62,6 +62,10 @@ graph TD
 - **실행 결과 기반 2단계 팩트 분석 (Execute-then-Analyze)**: BigQuery에서 실제 조회된 팩트 데이터(토큰 수량, 달러 비용, 차단 텍스트 등)를 읽고 100% 명확한 분석 결과를 작성합니다.
 - **지능형 차트 조건부 렌더링**: 수치 통계 질문(Top 3 비용, 유저 랭킹 등)에만 정밀 차트를 렌더링하고, 프롬프트 문구 및 이력 목록 조회 시에는 차트를 비활성화하여 정갈한 텍스트 리포트를 제공합니다.
 
+### 5️⃣ Gemini 3.5 Flash 실시간 비용 급증 지능형 FinOps 분석 엔진 💡
+- **전일 대비 비용 급증 감지 및 원인 규명**: 50% 이상의 과금 스파이크 감지 시, 급증한 당일(`D`)과 전날(`D-1`)의 빌링 로그를 SKU 단위로 실시간 교차 대조하여 비용 상승을 주도한 최상위 타겟 SKU 명칭과 상세 변동 폭을 정확히 자연어로 요약해 줍니다.
+- **SKU 맞춤형 ⚠️ 권장 점검 체크포인트 생성**: 상승한 SKU 종류(Input 토큰, Output 토큰, 보안 필터 비용 등)를 파악하고, 이에 가장 적절한 실천적이고 구체적인 조치 권장 체크포인트 3종을 생성형 AI를 통해 동적으로 처방합니다.
+
 ---
 
 ## 📊 3. 대시보드 메트릭 및 BigQuery 데이터 소스 매핑 (Metrics Map)
@@ -218,9 +222,14 @@ CLOUDSDK_AUTH_ACCESS_TOKEN=$TOKEN gcloud run deploy ai-governance-dashboard \
 
 ## 📄 5. 구성 파일 설명 (Project Structure)
 
-- `backend_server.py`: Python 기반 다중 스레드 HTTP REST 백엔드 서버 (BigQuery Integration & Gemini 3.5 Flash 2nd-Pass Fact Analyzer Engine)
-- `index.html`: 크렉스티오(Crextio) 엔터프라이즈 디자인 시스템 기반 프론트엔드 대시보드 & AI 챗봇 모달 UI
+- `src/`: 대시보드 애플리케이션 소스 코드 폴더
+  - `src/backend_server.py`: Python 기반 다중 스레드 HTTP REST 백엔드 서버 (BigQuery Integration & Gemini 3.5 Flash 2nd-Pass Fact Analyzer & FinOps Spikes Engine)
+  - `src/index.html`: 크렉스티오(Crextio) 엔터프라이즈 디자인 시스템 기반 프론트엔드 대시보드 & AI 챗봇 모달 UI
+  - `src/lg_logo.png`: 대시보드 상단 표출 브랜드 로고 파일
+- `terraform/`: IaC 인프라 프로비저닝 폴더
+  - `terraform/main.tf`: Terraform IaC 인프라 프로비저닝 메인 명세서 (SA 계정 생성, 권한 부여, Cloud Run 배포 자동화)
+  - `terraform/variables.tf`: Terraform 파라미터 매핑 변수 정의 파일
+- `tests/`: 테스트 보조 명세 폴더
+  - `tests/test_sa_query.py`: GCP 서비스 계정 및 빅쿼리 조회 권한 디버깅용 스크립트
 - `config.yaml`: BigQuery 데이터셋, 프로젝트 ID, 쿼리 설정 튜닝 파일 (Single Source of Truth)
-- `main.tf`: Terraform IaC 인프라 프로비저닝 메인 명세서 (SA 계정 생성, 권한 부여, Cloud Run 배포 자동화)
-- `variables.tf`: Terraform 파라미터 매핑 변수 정의 파일
-- `Dockerfile`: Google Cloud Run 컨테이너 빌드 파일
+- `Dockerfile`: Google Cloud Run 컨테이너 빌드 파일 (src 폴더만 복사하도록 최적화 완료)
