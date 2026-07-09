@@ -35,6 +35,12 @@ resource "google_project_iam_member" "bq_job_user" {
   member  = "serviceAccount:${google_service_account.dashboard_sa.email}"
 }
 
+resource "google_project_iam_member" "vertex_ai_user" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.dashboard_sa.email}"
+}
+
 # 3. Google Cloud Run v2 서비스 생성 (Pre-built 이미지 기반 기동)
 resource "google_cloud_run_v2_service" "dashboard" {
   name     = var.dashboard_service_name
