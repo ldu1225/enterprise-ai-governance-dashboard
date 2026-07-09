@@ -51,8 +51,7 @@ graph TD
 
 ### 3️⃣ 완전 무결한 실측 연동 및 브랜드 커스텀 (Branding & Clean Data) 💡
 - **동적 브랜딩 오버라이드 지원**: `config.yaml` 내 `dashboard` 항목 또는 컨테이너 환경 변수 `DASHBOARD_TITLE`, `DASHBOARD_SUBTITLE` 주입을 통해 전사 대시보드 메인 로고 타이틀과 서브타이틀 명칭을 코드 변경 없이 원스톱 변경할 수 있습니다.
-- **동적 결제 계정 ID 바인딩**: 기존 하드코딩되었던 결제 계정 링크/텍스트를 제거하고, 서버의 `/api/config` 응답에서 빌링 계정 ID를 dynamic하게 읽어와 렌더링함으로써 보안성과 가용성을 높였습니다.
-- **가짜 데이터(Mock Fallback)의 원천 차단**: BigQuery 연결 실패나 빈 데이터셋 조회 시 표출되던 가짜 테스트 계정(`user@company.com`)과 목업 에이전트 목록을 완전히 소거했습니다. 실데이터가 없을 시 깨끗하게 빈 목록(`[]`)으로 폴백하도록 정밀 가공되었습니다.
+- **동적 결제 계정 ID 바인딩**: 서버의 `/api/config` 응답에서 빌링 계정 ID를 dynamic하게 읽어와 렌더링함으로써 보안성과 가용성을 높였습니다.
 
 ### 4️⃣ Gemini 3.5 Flash 기반 2단계(2nd-Pass) 팩트 분석 AI 챗봇
 - **전사 6대 BigQuery 데이터셋 100% 통합 인지**: Billing, ModelArmor, DiscoveryEngine, CloudAudit, CodeAssist, AgentRegistry 데이터셋 전체를 지능적으로 쿼리합니다.
