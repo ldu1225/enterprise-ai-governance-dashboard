@@ -1,8 +1,5 @@
 # 🛡️ Enterprise AI Governance & Agent Platform Dashboard
 
-> **엔터프라이즈 통합 AI 거버넌스, 과금 추적 및 AI 챗봇 관제 플랫폼 마스터 가이드**
-> **GCP Cloud Run 라이브 URL**: https://lges-dashboard-484712896449.us-central1.run.app/
-
 ---
 
 ## 📐 1. 전체 아키텍처 및 시스템 원리 (System Architecture)
