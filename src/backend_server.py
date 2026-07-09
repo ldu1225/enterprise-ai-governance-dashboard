@@ -301,7 +301,7 @@ DASHBOARD_VERSIONS = [
     }
 ]
 
-def get_bq_client_and_token():
+def get_access_token():
     global CACHED_TOKEN, TOKEN_EXPIRES_AT
     now = time.time()
     if not CACHED_TOKEN or now >= TOKEN_EXPIRES_AT:
@@ -318,11 +318,14 @@ def get_bq_client_and_token():
                 CACHED_TOKEN = token
                 TOKEN_EXPIRES_AT = now + 3000
             except Exception as e2:
-                print(f"Auth error: {e}, fallback error: {e2}")
-                return bigquery.Client(project=PROJECT_ID), None
+                print(f"Auth token generation warning: {e}, fallback: {e2}")
+                CACHED_TOKEN = None
+    return CACHED_TOKEN
 
-    creds = Credentials(CACHED_TOKEN)
-    return bigquery.Client(project=PROJECT_ID, credentials=creds), CACHED_TOKEN
+def get_bq_client_and_token():
+    client = bigquery.Client(project=PROJECT_ID)
+    token = get_access_token()
+    return client, token
 
 def get_real_gcp_projects():
     try:
