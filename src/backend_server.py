@@ -1815,57 +1815,41 @@ CRITICAL INSTRUCTIONS FOR SQL GENERATION:
         ai_comment = ""
         suggested_questions = []
         try:
-            print(f"DEBUG TOKEN PRESENT: {bool(token)}")
-            if token:
-                url_gem = f"https://aiplatform.googleapis.com/v1/projects/{PROJECT_ID}/locations/global/publishers/google/models/gemini-3.5-flash:generateContent"
-                headers_gem = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-                body_gem = {
-                    "contents": contents,
-                    "generationConfig": {
-                        "temperature": 0.2,
-                        "responseMimeType": "application/json",
-                        "responseSchema": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "sql": {"type": "STRING", "description": "Executable BigQuery Standard SQL query. Empty string if conversational explanation."},
-                                "answerComment": {"type": "STRING", "description": "Detailed multi-sentence Korean summary and executive insight."},
-                                "suggestedQuestions": {
-                                    "type": "ARRAY",
-                                    "items": {"type": "STRING"},
-                                    "description": "Exactly 3 follow-up suggested questions"
-                                }
-                            },
-                            "required": ["sql", "answerComment", "suggestedQuestions"]
-                        }
-                    }
-                }
-                
-                try:
-                    req_gem = urllib.request.Request(url_gem, data=json.dumps(body_gem).encode('utf-8'), headers=headers_gem)
-                    with urllib.request.urlopen(req_gem, timeout=30) as resp_gem:
-                        data_gem = json.loads(resp_gem.read().decode('utf-8'))
-                        res_text = data_gem['candidates'][0]['content']['parts'][0]['text']
-                        print(f"✅ SUCCESS Calling Gemini 3.5 Flash Endpoint: {url_gem}", flush=True)
-                except Exception as err_ep:
-                    print(f"⚠️ Gemini 3.5 Flash Endpoint Error: {err_ep}", flush=True)
+            client_genai = get_genai_client()
+            from google.genai import types
+            from pydantic import BaseModel, Field
+            from typing import List
 
-                if res_text:
-                    if "```json" in res_text:
-                        res_text = res_text.split("```json")[1].split("```")[0].strip()
-                    elif "```" in res_text:
-                        res_text = res_text.split("```")[1].split("```")[0].strip()
+            class ChatbotResponseSchema(BaseModel):
+                sql: str = Field(description="Executable BigQuery Standard SQL query. Empty string if conversational explanation.")
+                answerComment: str = Field(description="Detailed multi-sentence Korean summary and executive insight.")
+                suggestedQuestions: List[str] = Field(description="Exactly 3 follow-up suggested questions")
 
-                    parsed_res = json.loads(res_text.strip())
-                    generated_sql = parsed_res.get("sql", "").strip()
-                    ai_comment = parsed_res.get("answerComment", "").strip()
-                    suggested_questions = parsed_res.get("suggestedQuestions", [])
-                    print(f"DEBUG PARSED SQL: '{generated_sql}'", flush=True)
-                    print(f"DEBUG PARSED COMMENT: '{ai_comment}'", flush=True)
-                    print(f"DEBUG SUGGESTED QUESTIONS: {suggested_questions}", flush=True)
-            else:
-                print("DEBUG: Token is None!", flush=True)
-        except urllib.error.HTTPError as e_http:
-            print("❌ GEMINI API HTTP ERROR:", e_http.code, e_http.read().decode('utf-8'), flush=True)
+            response = client_genai.models.generate_content(
+                model='gemini-3.5-flash',
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    response_mime_type="application/json",
+                    response_schema=ChatbotResponseSchema
+                )
+            )
+            res_text = response.text.strip()
+            print("✅ SUCCESS Calling Gemini 3.5 Flash via GenAI SDK", flush=True)
+
+            if res_text:
+                if "```json" in res_text:
+                    res_text = res_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in res_text:
+                    res_text = res_text.split("```")[1].split("```")[0].strip()
+
+                parsed_res = json.loads(res_text.strip())
+                generated_sql = parsed_res.get("sql", "").strip()
+                ai_comment = parsed_res.get("answerComment", "").strip()
+                suggested_questions = parsed_res.get("suggestedQuestions", [])
+                print(f"DEBUG PARSED SQL: '{generated_sql}'", flush=True)
+                print(f"DEBUG PARSED COMMENT: '{ai_comment}'", flush=True)
+                print(f"DEBUG SUGGESTED QUESTIONS: {suggested_questions}", flush=True)
         except Exception as e_sql:
             import traceback
             print("❌ GEMINI API EXCEPTION:", e_sql, flush=True)
@@ -1960,21 +1944,17 @@ CRITICAL INSTRUCTIONS FOR SQL GENERATION:
                     Do NOT wrap in markdown, code blocks (```sql), or backticks. Return the SQL query text directly.
                     """
                     
-                    url_gem = f"https://aiplatform.googleapis.com/v1/projects/{PROJECT_ID}/locations/global/publishers/google/models/gemini-3.5-flash:generateContent"
-                    headers_gem = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-                    body_gem = {
-                        "contents": [{"role": "user", "parts": [{"text": fix_prompt}]}],
-                        "generationConfig": {"temperature": 0.1}
-                    }
+                    client_genai = get_genai_client()
+                    response = client_genai.models.generate_content(
+                        model='gemini-3.5-flash',
+                        contents=fix_prompt,
+                        config=types.GenerateContentConfig(temperature=0.1)
+                    )
+                    new_sql = response.text.strip()
                     
-                    req_gem = urllib.request.Request(url_gem, data=json.dumps(body_gem).encode('utf-8'), headers=headers_gem)
-                    with urllib.request.urlopen(req_gem, timeout=15) as resp_gem:
-                        data_gem = json.loads(resp_gem.read().decode('utf-8'))
-                        new_sql = data_gem['candidates'][0]['content']['parts'][0]['text'].strip()
-                        
-                        new_sql = new_sql.strip('`').replace('```sql', '').replace('```', '').strip()
-                        generated_sql = new_sql
-                        print(f"[Self-Heal] Gemini generated corrected SQL:\n{generated_sql}", flush=True)
+                    new_sql = new_sql.strip('`').replace('```sql', '').replace('```', '').strip()
+                    generated_sql = new_sql
+                    print(f"[Self-Heal] Gemini generated corrected SQL:\n{generated_sql}", flush=True)
                 except Exception as err_gem_fix:
                     print(f"[Self-Heal] Failed to call Gemini for SQL fix: {err_gem_fix}", flush=True)
                     break
@@ -2019,19 +1999,16 @@ CRITICAL INSTRUCTIONS FOR SQL GENERATION:
                     State exact names, token counts, costs ($ USD), or record counts explicitly found in the data.
                     Do NOT use generic boilerplate explanations. Focus directly on the numbers and names in the result rows!
                     """
-                    url_gem = f"https://aiplatform.googleapis.com/v1/projects/{PROJECT_ID}/locations/global/publishers/google/models/gemini-3.5-flash:generateContent"
-                    headers_gem = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-                    body_gem = {
-                        "contents": [{"role": "user", "parts": [{"text": analysis_prompt}]}],
-                        "generationConfig": {"temperature": 0.2}
-                    }
-                    req_gem = urllib.request.Request(url_gem, data=json.dumps(body_gem).encode('utf-8'), headers=headers_gem)
-                    with urllib.request.urlopen(req_gem, timeout=15) as resp_gem:
-                        data_gem = json.loads(resp_gem.read().decode('utf-8'))
-                        res_fact = data_gem['candidates'][0]['content']['parts'][0]['text'].strip()
-                        if res_fact:
-                            ai_comment = res_fact
-                            print("✅ SUCCESS 2nd-Pass Gemini Fact Analysis generated!", flush=True)
+                    client_genai = get_genai_client()
+                    response = client_genai.models.generate_content(
+                        model='gemini-3.5-flash',
+                        contents=analysis_prompt,
+                        config=types.GenerateContentConfig(temperature=0.2)
+                    )
+                    res_fact = response.text.strip()
+                    if res_fact:
+                        ai_comment = res_fact
+                        print("✅ SUCCESS 2nd-Pass Gemini Fact Analysis generated!", flush=True)
                 except Exception as err_fact:
                     print("⚠️ 2nd-Pass Fact Analysis error, using fallback:", err_fact, flush=True)
 
