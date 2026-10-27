@@ -387,16 +387,19 @@ case "$ACCESS_MODE" in
     for member in "${members[@]}"; do
       member="${member// /}"
       [[ -n "$member" ]] || continue
-      if ! run gcloud iap web add-iam-policy-binding --resource-type=cloud-run --service="$BRIDGE_NAME" --region="$REGION" \
-          --project="$PROJECT_ID" --member="$member" --role=roles/iap.httpsResourceAccessor --condition=None >/dev/null 2>&1; then
-        warn "IAP access for ${member} was refused by an organization policy; granting domain/user bindings from ADMIN_EMAILS and ALLOWED_USERS instead"
-        while IFS= read -r fallback_member; do
-          [[ -n "$fallback_member" ]] || continue
-          run gcloud iap web add-iam-policy-binding --resource-type=cloud-run --service="$BRIDGE_NAME" --region="$REGION" \
-            --project="$PROJECT_ID" --member="$fallback_member" --role=roles/iap.httpsResourceAccessor --condition=None >/dev/null 2>&1 \
-            && info "sign-in bridge IAP access: ${fallback_member}" || true
-        done < <(python3 - "$ADMIN_EMAILS" "$ALLOWED_USERS" <<'PY'
+      run gcloud iap web add-iam-policy-binding --resource-type=cloud-run --service="$BRIDGE_NAME" --region="$REGION" \
+        --project="$PROJECT_ID" --member="$member" --role=roles/iap.httpsResourceAccessor --condition=None >/dev/null 2>&1 || true
+    done
+    # Cloud Run Direct IAP evaluates explicit user:/domain: bindings even when allAuthenticatedUsers is present
+    # in the policy; always bind configured ADMIN_EMAILS and ALLOWED_USERS principals.
+    while IFS= read -r fallback_member; do
+      [[ -n "$fallback_member" ]] || continue
+      run gcloud iap web add-iam-policy-binding --resource-type=cloud-run --service="$BRIDGE_NAME" --region="$REGION" \
+        --project="$PROJECT_ID" --member="$fallback_member" --role=roles/iap.httpsResourceAccessor --condition=None >/dev/null 2>&1 \
+        && info "sign-in bridge IAP access: ${fallback_member}" || true
+    done < <(python3 - "$ADMIN_EMAILS" "$ALLOWED_USERS" <<'PY'
 import sys
+public_domains = {"gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com", "live.com", "icloud.com", "naver.com", "daum.net", "hanmail.net", "kakao.com"}
 seen = set()
 for raw in sys.argv[1:]:
     for token in raw.split(","):
@@ -404,14 +407,19 @@ for raw in sys.argv[1:]:
         if "@" not in token:
             continue
         domain = token.rpartition("@")[2]
-        for cand in (f"domain:{domain}", None if token.startswith("*@") else f"user:{token}"):
+        cands = []
+        if domain and domain not in public_domains:
+            cands.append(f"domain:{domain}")
+        if not token.startswith("*@"):
+            cands.append(f"user:{token}")
+        for cand in cands:
             if cand and cand not in seen:
                 seen.add(cand)
                 print(cand)
 PY
-        )
-      fi
-    done
+    )
+    run gcloud projects add-iam-policy-binding "$PROJECT_ID" --member "serviceAccount:${SA_EMAIL}" \
+      --role roles/iap.admin --condition=None --quiet >/dev/null 2>&1 || true
     ENV_VARS+="##AUTH_MODE=google##SIGN_IN_BRIDGE_URL=${BRIDGE_URL}##PUBLIC_BASE_URL=${BASE_URL}"
     run gcloud run deploy "$SERVICE_NAME" "${MAIN[@]}" --no-iap --no-invoker-iam-check \
       --memory "$MEMORY" --cpu "$CPU" --min-instances "$MIN_INSTANCES" --max-instances "$MAX_INSTANCES" --timeout 300 \

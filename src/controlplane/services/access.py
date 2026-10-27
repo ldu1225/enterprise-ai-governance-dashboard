@@ -100,10 +100,117 @@ def summary(ctx):
             "sessionHours": sec.get("session_hours"), "self": actor}
 
 
-def _save_lists(ctx, admins, allowed):
+_PUBLIC_EMAIL_DOMAINS = frozenset({
+    "gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com",
+    "live.com", "icloud.com", "me.com", "aol.com", "proton.me", "protonmail.com",
+    "naver.com", "daum.net", "hanmail.net", "kakao.com",
+})
+_RUN_APP_BRIDGE_RE = re.compile(r"^https://([a-z0-9-]+)-([0-9]+)\.([a-z0-9-]+)\.run\.app(?:[:/]|$)")
+
+
+def _iap_bridge_resource(ctx):
+    auth = getattr(ctx.app, "auth", None)
+    bridge_url = getattr(auth, "bridge_url", "") if auth else ""
+    if not bridge_url:
+        return None
+    explicit = (ctx.app.environ.get("SIGN_IN_BRIDGE_IAP_RESOURCE") or "").strip()
+    if explicit:
+        return explicit
+    m = _RUN_APP_BRIDGE_RE.match(bridge_url.strip().lower())
+    if m:
+        service, project_num, region = m.group(1), m.group(2), m.group(3)
+        return "projects/%s/iap_web/cloud_run-%s/services/%s" % (project_num, region, service)
+    return None
+
+
+def _principals_for_entries(entries):
+    out = set()
+    for raw in entries or ():
+        token = str(raw or "").strip().lower()
+        if not token or token == "*" or "@" not in token:
+            continue
+        domain = token.rpartition("@")[2]
+        if token.startswith("*@"):
+            if domain and domain not in _PUBLIC_EMAIL_DOMAINS:
+                out.add("domain:" + domain)
+        else:
+            out.add("user:" + token)
+            if domain and domain not in _PUBLIC_EMAIL_DOMAINS:
+                out.add("domain:" + domain)
+    return out
+
+
+def _sync_iap_bridge(ctx, removed_member=None):
+    """Best-effort sync of approved users/domains to the Cloud Run IAP sign-in bridge IAM policy."""
+    resource = _iap_bridge_resource(ctx)
+    if not resource or not getattr(ctx.app, "gcp", None):
+        return
+    try:
+        effective, _ = ctx.app.settings.snapshot()
+        quota_project = (effective.get("workspace") or {}).get("project_id") or ""
+        sec = effective.get("security") or {}
+        desired = _principals_for_entries(list(sec.get("admins") or []) + list(sec.get("allowed_users") or []))
+        desired.add("allAuthenticatedUsers")
+        removed = set()
+        if removed_member:
+            rm = str(removed_member).strip().lower()
+            if rm.startswith("*@"):
+                removed.add("domain:" + rm[2:])
+            elif "@" in rm:
+                removed.add("user:" + rm)
+        base_url = "https://iap.googleapis.com/v1/" + resource
+        policy, _ = ctx.app.gcp.request("POST", base_url + ":getIamPolicy", quota_project=quota_project,
+                                        json_body={}, timeout=10)
+        policy = policy or {}
+        bindings = list(policy.get("bindings") or [])
+        role = "roles/iap.httpsResourceAccessor"
+        target = None
+        for b in bindings:
+            if b.get("role") == role:
+                target = b
+                break
+        if target is None:
+            target = {"role": role, "members": []}
+            bindings.append(target)
+        current = set(target.get("members") or [])
+        updated = (current - removed) | (desired - removed)
+        if updated == current:
+            return
+        # Try bulk update first; if a domain/user is rejected by IAM, add new members individually.
+        target["members"] = sorted(updated)
+        new_policy = {"version": policy.get("version", 1), "bindings": bindings}
+        if policy.get("etag"):
+            new_policy["etag"] = policy["etag"]
+        try:
+            ctx.app.gcp.request("POST", base_url + ":setIamPolicy", quota_project=quota_project,
+                                json_body={"policy": new_policy}, timeout=10)
+            return
+        except Exception:  # pylint: disable=broad-except
+            pass
+        kept = current - removed
+        for cand in sorted(desired - kept):
+            trial = sorted(kept | {cand})
+            target["members"] = trial
+            try:
+                pol, _ = ctx.app.gcp.request("POST", base_url + ":getIamPolicy", quota_project=quota_project,
+                                             json_body={}, timeout=10)
+                pol = pol or {}
+                if pol.get("etag"):
+                    new_policy["etag"] = pol["etag"]
+                ctx.app.gcp.request("POST", base_url + ":setIamPolicy", quota_project=quota_project,
+                                    json_body={"policy": new_policy}, timeout=10)
+                kept.add(cand)
+            except Exception as exc:  # pylint: disable=broad-except
+                LOG.warning("iap bridge binding skipped member=%s reason=%s", cand, type(exc).__name__)
+    except Exception as exc:  # pylint: disable=broad-except
+        LOG.warning("iap bridge policy sync skipped reason=%s", type(exc).__name__)
+
+
+def _save_lists(ctx, admins, allowed, removed_member=None):
     ctx.app.settings.update_section("security", {"admins": admins, "allowed_users": allowed}, ctx.identity.email,
                                     check=admin_guard(ctx.identity))
     ctx.app.on_settings_changed()
+    _sync_iap_bridge(ctx, removed_member=removed_member)
 
 
 def _drop_requests(ctx, members):
@@ -171,7 +278,7 @@ def delete_user(ctx):
     admins, allowed = _ui_lists(ctx.app.settings)
     if member not in admins and member not in allowed:
         raise ApiError("not_found", "Account not found.")
-    _save_lists(ctx, [m for m in admins if m != member], [m for m in allowed if m != member])
+    _save_lists(ctx, [m for m in admins if m != member], [m for m in allowed if m != member], removed_member=member)
     if member != "*" and not member.startswith("*@"):
         epoch = int(time.time() * 1000)
 
