@@ -154,6 +154,8 @@ class GoogleSignIn:
         self.bridge_url = (sec.get("sign_in_bridge_url") or "").rstrip("/")
         self.client_id = sec.get("google_client_id") or ""
         self.client_secret = (environ.get("GOOGLE_OAUTH_CLIENT_SECRET") or "").strip()
+        self.oauth_redirect_uri = (environ.get("GOOGLE_OAUTH_REDIRECT_URI") or "").strip()
+        self.oauth_start_url = (environ.get("GOOGLE_OAUTH_START_URL") or "").strip()
         if not self.bridge_url:
             if not self.client_id:
                 raise ValueError("auth_mode=google requires security.google_client_id (GOOGLE_OAUTH_CLIENT_ID) "
@@ -180,7 +182,7 @@ class GoogleSignIn:
             return None
         return (urllib.parse.urlsplit(self.public_base_url).netloc or "").lower() or None
 
-    def redirect_uri(self, headers):
+    def callback_uri(self, headers):
         if self.public_base_url:
             return self.public_base_url + CALLBACK_PATH
         host = (headers.get("Host") or "").strip()
@@ -188,6 +190,11 @@ class GoogleSignIn:
             raise ApiError("bad_request", "The request host is invalid.")
         scheme = "https" if request_is_https(headers) else "http"
         return "%s://%s%s" % (scheme, host, CALLBACK_PATH)
+
+    def redirect_uri(self, headers):
+        if self.oauth_redirect_uri:
+            return self.oauth_redirect_uri
+        return self.callback_uri(headers)
 
     @staticmethod
     def _cookie(base, value, https, max_age, same_site="Lax"):
@@ -239,7 +246,7 @@ class GoogleSignIn:
         next_path = safe_next((params.get("next") or ["/"])[0])
         https = request_is_https(headers)
         state = secrets.token_urlsafe(32)
-        if self.bridge_url:
+        if self.bridge_url and not (self.client_id and self.client_secret):
             txn = self.transactions.sign({"s": state, "next": next_path, "m": "bridge"}, TRANSACTION_TTL)
             cookies = [self._cookie(TRANSACTION_COOKIE, txn, https, TRANSACTION_TTL), self._clear(NOTICE_COOKIE, https)]
             return "%s%s?%s" % (self.bridge_url, BRIDGE_PATH, urllib.parse.urlencode({"state": state})), cookies
@@ -247,13 +254,16 @@ class GoogleSignIn:
         verifier = secrets.token_urlsafe(64)
         challenge = _b64e(hashlib.sha256(verifier.encode("ascii")).digest())
         txn = self.transactions.sign({"s": state, "n": nonce, "v": verifier, "next": next_path}, TRANSACTION_TTL)
-        query_string = urllib.parse.urlencode({
+        oauth_params = {
             "client_id": self.client_id, "redirect_uri": self.redirect_uri(headers), "response_type": "code",
             "scope": SCOPES, "state": state, "nonce": nonce, "code_challenge": challenge,
             "code_challenge_method": "S256", "prompt": "select_account", "access_type": "online",
-            "include_granted_scopes": "false"})
+            "include_granted_scopes": "false"}
+        if self.oauth_start_url:
+            oauth_params["return_to"] = self.callback_uri(headers)
+        query_string = urllib.parse.urlencode(oauth_params)
         cookies = [self._cookie(TRANSACTION_COOKIE, txn, https, TRANSACTION_TTL), self._clear(NOTICE_COOKIE, https)]
-        return "%s?%s" % (GOOGLE_AUTH_URL, query_string), cookies
+        return "%s?%s" % (self.oauth_start_url or GOOGLE_AUTH_URL, query_string), cookies
 
     def callback(self, headers, query, settings):
         """Completes the sign-in. Returns (location, cookies). Never raises for user-caused errors."""
