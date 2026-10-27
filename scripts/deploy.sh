@@ -62,6 +62,9 @@ BRIDGE_MEMBERS="${BRIDGE_MEMBERS:-allAuthenticatedUsers}"
 GUEST_ACCESS="${GUEST_ACCESS:-false}"
 GUEST_REDACT_TERMS="${GUEST_REDACT_TERMS:-}"
 OAUTH_CLIENT_JSON="${OAUTH_CLIENT_JSON:-}"
+GOOGLE_OAUTH_CLIENT_ID="${GOOGLE_OAUTH_CLIENT_ID:-}"
+GOOGLE_OAUTH_REDIRECT_URI="${GOOGLE_OAUTH_REDIRECT_URI:-}"
+GOOGLE_OAUTH_START_URL="${GOOGLE_OAUTH_START_URL:-}"
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-}"
 ORGANIZATION_NAME="${ORGANIZATION_NAME:-Your Organization}"
 PRODUCT_NAME="${PRODUCT_NAME:-}"
@@ -318,6 +321,11 @@ PY
   run retry gcloud secrets add-iam-policy-binding "$OAUTH_SECRET_NAME" --project "$PROJECT_ID" \
     --member "serviceAccount:${SA_EMAIL}" --role roles/secretmanager.secretAccessor --condition=None >/dev/null
   SECRETS="${SECRETS},GOOGLE_OAUTH_CLIENT_SECRET=${OAUTH_SECRET_NAME}:latest"
+elif [[ -n "$GOOGLE_OAUTH_CLIENT_ID" ]] && gcloud secrets describe "$OAUTH_SECRET_NAME" --project "$PROJECT_ID" >/dev/null 2>&1; then
+  info "OAuth client ${GOOGLE_OAUTH_CLIENT_ID} (using Secret Manager secret ${OAUTH_SECRET_NAME})"
+  run retry gcloud secrets add-iam-policy-binding "$OAUTH_SECRET_NAME" --project "$PROJECT_ID" \
+    --member "serviceAccount:${SA_EMAIL}" --role roles/secretmanager.secretAccessor --condition=None >/dev/null
+  SECRETS="${SECRETS},GOOGLE_OAUTH_CLIENT_SECRET=${OAUTH_SECRET_NAME}:latest"
 fi
 
 # ------------------------------------------------------------------------------- 6. data sources
@@ -365,6 +373,9 @@ add_env BILLING_ACCOUNT_ID "$BILLING_ACCOUNT_ID"
 add_env AI_DEFAULT_MODEL "$AI_DEFAULT_MODEL"
 add_env AI_LOCATION "$AI_LOCATION"
 add_env ALLOWED_USERS "$ALLOWED_USERS"
+add_env GOOGLE_OAUTH_CLIENT_ID "$GOOGLE_OAUTH_CLIENT_ID"
+add_env GOOGLE_OAUTH_REDIRECT_URI "$GOOGLE_OAUTH_REDIRECT_URI"
+add_env GOOGLE_OAUTH_START_URL "$GOOGLE_OAUTH_START_URL"
 if [[ "$GUEST_ACCESS" == "true" ]]; then
   add_env GUEST_ACCESS true
   add_env GUEST_REDACT_TERMS "$GUEST_REDACT_TERMS"

@@ -374,7 +374,9 @@ class GoogleSignIn:
 
     def switch_account_url(self):
         """Bridge mode: clears the IAP session on the bridge so the next sign-in asks for an account."""
-        return (self.bridge_url + "/_gcp_iap/clear_login_cookie") if self.bridge_url else None
+        if self.bridge_url and not (self.client_id and self.client_secret):
+            return self.bridge_url + "/_gcp_iap/clear_login_cookie"
+        return None
 
     def verify_id_token(self, id_token):
         """Verifies signature (Google certificates), audience, issuer and expiry; requires a

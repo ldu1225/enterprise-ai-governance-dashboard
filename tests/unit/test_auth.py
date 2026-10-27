@@ -542,5 +542,40 @@ class SignInBridgeTest(unittest.TestCase):
                                         "SIGN_IN_BRIDGE_URL": "https://bridge.example.com",
                                         "BRIDGE_RETURN_URL": "https://dash.example.com"})
 
+    def test_oauth_redirect_and_start_url_precedence_over_bridge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "c.yaml")
+            with open(cfg, "w", encoding="utf-8") as fh:
+                fh.write(CONFIG)
+            environ = dict(
+                ENV,
+                CONFIG_PATH=cfg,
+                GOOGLE_OAUTH_CLIENT_ID=CLIENT_ID,
+                GOOGLE_OAUTH_REDIRECT_URI="https://relay.example.com/__/auth/handler",
+                GOOGLE_OAUTH_START_URL="https://relay.example.com/auth/bridge",
+                SIGN_IN_BRIDGE_URL="https://iap-bridge.example.com",
+                PUBLIC_BASE_URL="https://dash.example.com",
+            )
+            with mock.patch.dict(os.environ, {"CONFIG_PATH": cfg}):
+                custom_app = app_module.App(environ=environ)
+            srv = app_module.make_server(custom_app, "127.0.0.1", 0)
+            port = srv.server_address[1]
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+            try:
+                start = _get(port, "/auth/google/start", headers={"Host": "dash.example.com"})
+                self.assertEqual(start.status, 302)
+                loc = start.header("Location")
+                self.assertTrue(loc.startswith("https://relay.example.com/auth/bridge?"), loc)
+                outer_q = urllib.parse.parse_qs(urllib.parse.urlsplit(loc).query)
+                self.assertEqual(outer_q["return_to"], ["https://dash.example.com/auth/google/callback"])
+                self.assertEqual(outer_q["redirect_uri"], ["https://relay.example.com/__/auth/handler"])
+                self.assertEqual(outer_q["client_id"], [CLIENT_ID])
+                self.assertEqual(outer_q["code_challenge_method"], ["S256"])
+            finally:
+                srv.shutdown()
+                srv.server_close()
+
+
 if __name__ == "__main__":
     unittest.main()
+
