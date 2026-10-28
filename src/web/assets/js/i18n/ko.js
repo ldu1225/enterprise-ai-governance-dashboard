@@ -1904,6 +1904,7 @@ const KO = {
   'Primary': '기본 프로젝트',
   'Connected': '연동됨',
   'Manage connected projects': '연동 프로젝트 설정 및 관리',
+  'Total tokens': '총 토큰',
 };
 
 export default KO;
