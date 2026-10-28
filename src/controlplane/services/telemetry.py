@@ -250,14 +250,20 @@ def _task_result(ctx, result, source, what):
     return None
 
 
+AGENT_STREAM_RE = re.compile(
+    r'^\s*resource\.labels\.job="([A-Za-z0-9_\-]+)"\s+OR\s+resource\.labels\.service_name="\1"\s*$'
+)
+
+
 def _logging_resource_names(ctx, flt):
-    """Returns projects/<id> resourceNames for Cloud Logging queries across connected projects."""
+    """Returns projects/<id> resourceNames for Cloud Logging queries."""
     all_projs = getattr(ctx, "projects", None) or [ctx.project]
     m = re.findall(r"projects/([a-z][a-z0-9\-]{4,29})/logs/", flt or "")
+    m += re.findall(r'project_id\s*=\s*"([a-z][a-z0-9\-]{4,29})"', flt or "")
     projs = [p for p in dict.fromkeys(m) if p in all_projs]
     if projs:
         return ["projects/%s" % p for p in projs]
-    return ["projects/%s" % p for p in all_projs]
+    return ["projects/%s" % ctx.project]
 
 
 def _discover_agent_streams(ctx):
@@ -268,15 +274,20 @@ def _discover_agent_streams(ctx):
     now = dt.datetime.now(dt.timezone.utc)
     today = now.astimezone(tz).date()
     index = {today - dt.timedelta(days=ACTIVITY_DAYS - 1 - i): i for i in range(ACTIVITY_DAYS)}
-    since = iso(now - dt.timedelta(days=60))
+    since = iso(now - dt.timedelta(days=30))
+    p = ctx.project
     body = {
-        "resourceNames": ["projects/%s" % p for p in ctx.projects],
-        "filter": '(logName:"gen_ai.user.message" OR logName:"gen_ai.choice" OR labels."created-by"="adk") AND timestamp>="%s"' % since,
+        "resourceNames": ["projects/%s" % p],
+        "filter": (
+            '((logName="projects/%s/logs/gen_ai.user.message" OR logName="projects/%s/logs/gen_ai.choice") '
+            'OR (resource.type="cloud_run_revision" AND labels."created-by"="adk")) AND timestamp>="%s"'
+            % (p, p, since)
+        ),
         "orderBy": "timestamp desc",
-        "pageSize": 250,
+        "pageSize": 150,
     }
     try:
-        data = ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body=body, timeout=15)
+        data = ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body=body, timeout=6)
     except Exception:  # pylint: disable=broad-except
         return [], {}
     found = {}
@@ -442,11 +453,14 @@ def _connector_health(ctx, conn):
             rows = ctx.query(sql, params, "telemetry")
             return "ok", iso(rows[0].get("last")) if rows else None
         flt = (conn.get("logging") or {}).get("filter") or ""
+        m = AGENT_STREAM_RE.match(flt)
+        if m:
+            flt = 'resource.type="cloud_run_revision" AND resource.labels.service_name="%s"' % m.group(1)
         since = iso(dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30))
         body = {"resourceNames": _logging_resource_names(ctx, flt),
                 "filter": "(%s) AND timestamp>=\"%s\"" % (flt, since),
                 "orderBy": "timestamp desc", "pageSize": 1}
-        data = ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body=body)
+        data = ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body=body, timeout=6)
         entries = data.get("entries") or []
         return "ok", iso(parse_rfc3339(entries[0].get("timestamp"))) if entries else None
     except (GcpError, ValueError, ApiError) as err:
@@ -904,26 +918,60 @@ def _logging_data(ctx, conn, rng, out):
     prev = rng.previous()
     label = "logging:%s" % conn.get("name")
     is_live = type(getattr(ctx, "gcp", None)).__name__ == "Gcp"
-    query_start = min(prev.start_ts(), rng.end_ts() - dt.timedelta(days=30)) if is_live else prev.start_ts()
+    if is_live:
+        earliest = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)
+        query_start = max(min(prev.start_ts(), rng.end_ts() - dt.timedelta(days=30)), earliest)
+    else:
+        query_start = prev.start_ts()
     body_filter = '(%s) AND timestamp>="%s" AND timestamp<"%s"' % (flt, iso(query_start), iso(rng.end_ts()))
     entries = []
     token = None
     truncated = False
     resource_names = _logging_resource_names(ctx, flt)
+    agent_match = AGENT_STREAM_RE.match(flt) if is_live else None
     try:
-        while True:
-            body = {"resourceNames": resource_names, "filter": body_filter,
-                    "orderBy": "timestamp desc", "pageSize": min(1000, MAX_LOG_ENTRIES - len(entries))}
-            if token:
-                body["pageToken"] = token
-            data = ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body=body, timeout=45)
-            entries.extend(e for e in data.get("entries") or [] if isinstance(e, dict))
-            token = data.get("nextPageToken")
-            if not token:
-                break
-            if len(entries) >= MAX_LOG_ENTRIES:
-                truncated = True
-                break
+        if agent_match:
+            svc = agent_match.group(1)
+            proj = ctx.project
+            ts_clause = 'timestamp>="%s" AND timestamp<"%s"' % (iso(query_start), iso(rng.end_ts()))
+            f_genai = (
+                '(logName="projects/%s/logs/gen_ai.user.message" OR logName="projects/%s/logs/gen_ai.choice") '
+                'AND resource.labels.job="%s" AND %s' % (proj, proj, svc, ts_clause)
+            )
+            f_run = 'resource.type="cloud_run_revision" AND resource.labels.service_name="%s" AND %s' % (svc, ts_clause)
+            res = ctx.run({
+                "genai": lambda: ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body={
+                    "resourceNames": resource_names, "filter": f_genai, "orderBy": "timestamp desc", "pageSize": 300,
+                }, timeout=8),
+                "run": lambda: ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body={
+                    "resourceNames": resource_names, "filter": f_run, "orderBy": "timestamp desc", "pageSize": 500,
+                }, timeout=8),
+            })
+            for k in ("genai", "run"):
+                ok, data = res[k]
+                if ok and isinstance(data, dict):
+                    entries.extend(e for e in data.get("entries") or [] if isinstance(e, dict))
+                elif not ok and not entries:
+                    raise data
+            entries.sort(key=lambda e: e.get("timestamp") or "", reverse=True)
+        else:
+            pages = 0
+            max_pages = 1 if is_live else 20
+            page_cap = 600 if is_live else 1000
+            while pages < max_pages:
+                pages += 1
+                body = {"resourceNames": resource_names, "filter": body_filter,
+                        "orderBy": "timestamp desc", "pageSize": min(page_cap, MAX_LOG_ENTRIES - len(entries))}
+                if token:
+                    body["pageToken"] = token
+                data = ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body=body, timeout=10 if is_live else 45)
+                entries.extend(e for e in data.get("entries") or [] if isinstance(e, dict))
+                token = data.get("nextPageToken")
+                if not token:
+                    break
+                if len(entries) >= MAX_LOG_ENTRIES or (is_live and pages >= max_pages):
+                    truncated = len(entries) >= MAX_LOG_ENTRIES
+                    break
     except GcpError as err:
         ctx.warn_error(label, err, "Cloud Logging entries for this connector")
         return out
@@ -1063,7 +1111,12 @@ def connector_data(ctx):
     conn = next((c for c in all_connectors(ctx) if c.get("id") == conn_id), None)
     if conn is None:
         raise ApiError("not_found", "Connector not found.")
-    item = with_health(ctx, conn)
+    item = copy.deepcopy(conn)
+    item.setdefault("bigquery", None)
+    item.setdefault("logging", None)
+    item["health"] = "ok"
+    item["lastEvent"] = None
+    item["catalog"] = catalog.for_connector(conn)
     out = _empty_data(item, rng)
     if not conn.get("enabled", True):
         ctx.warn("connector:%s" % conn_id, "disabled", "This connector is disabled.")
@@ -1074,7 +1127,9 @@ def connector_data(ctx):
         else:
             _logging_data(ctx, conn, rng, out)
     except GcpError as err:
+        item["health"] = "error"
         ctx.warn_error("connector:%s" % conn_id, err, "The connector source")
         return out
+    item["lastEvent"] = (out.get("kpis") or {}).get("lastEvent")
     out["valueNames"] = _value_names(ctx, conn, out)
     return out
