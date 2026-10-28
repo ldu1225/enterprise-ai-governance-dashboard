@@ -542,13 +542,14 @@ function openPasswordModal(account, onSaved) {
 /** Approved accounts (ID/Password & Google OAuth), roles and pending access requests (administrators only). */
 export function accessMembers(ctx = {}, editable = true) {
   const signal = ctx && ctx.signal;
+  const inDrawer = Boolean(ctx && ctx.inDrawer);
   const rerender = (ctx && ctx.rerender) || (() => {});
   const requestsSlot = h('div', { class: 'access-requests' });
-  const tableSlot = h('div', null, skeleton('table'));
+  const tableSlot = h('div', { class: 'access-table-slot' }, skeleton('table'));
   const formError = h('div', { class: 'field-error', role: 'alert' });
   const emailInput = textInput({
     value: '',
-    placeholder: 'team-admin, viewer1, user@example.com, *@example.com',
+    placeholder: 'team-admin, viewer1, user@example.com, *@domain.com',
     mono: true,
     attrs: { 'aria-label': t('Account ID, email or domain'), autocomplete: 'off', spellcheck: 'false', maxlength: 2000, disabled: !editable || null },
   });
@@ -564,15 +565,15 @@ export function accessMembers(ctx = {}, editable = true) {
   const addForm = h('div', { class: 'access-add' },
     h('div', { class: 'access-add-row' },
       h('div', { class: 'access-add-email' }, emailInput),
-      h('div', { class: 'access-add-password', style: 'min-width:220px;flex:1' }, passwordInput),
+      h('div', { class: 'access-add-password' }, passwordInput),
       roleSelect,
       addBtn),
     h('span', { class: 'field-help' }, t('Enter an account ID (e.g. team-admin, viewer1) with a password for direct ID/Password login, or enter a Google email / *@domain rule.')),
     formError);
   const c = card({
-    title: t('Accounts & passwords'),
-    subtitle: t('Manage ID/Password accounts (including the built-in admin account) and approved Google accounts. Administrators can change settings; viewers have read-only access.'),
-    bordered: true,
+    title: inDrawer ? null : t('Accounts & passwords'),
+    subtitle: inDrawer ? null : t('Manage ID/Password accounts (including the built-in admin account) and approved Google accounts. Administrators can change settings; viewers have read-only access.'),
+    bordered: !inDrawer,
     body: h('div', { class: 'access-body' }, requestsSlot, editable ? addForm : null, tableSlot),
   });
   c.emailInput = emailInput;
@@ -688,7 +689,7 @@ export function accessMembers(ctx = {}, editable = true) {
                     : (u.hasPassword ? t('ID / Password login enabled') : t('Google OAuth sign-in'))))),
         },
         {
-          key: 'role', label: t('Role'), width: '170px',
+          key: 'role', label: t('Role'), width: '124px',
           render: (u) => {
             if (!editable || !u.canChangeRole) return u.role === 'admin' ? badge(t('Administrator'), 'accent', { size: 'sm' }) : badge(t('Viewer'), 'neutral', { size: 'sm' });
             return selectInput([{ value: 'viewer', label: t('Viewer') }, { value: 'admin', label: t('Administrator') }], u.role, async (v) => {
@@ -702,7 +703,7 @@ export function accessMembers(ctx = {}, editable = true) {
           },
         },
         {
-          key: 'source', label: t('Auth / Source'), width: '170px',
+          key: 'source', label: t('Auth / Source'), width: '140px',
           render: (u) => {
             if (u.source === 'builtin') {
               return badge(u.defaultPassword ? t('Default (admin/admin)') : t('Built-in Admin'), u.defaultPassword ? 'warning' : 'accent', { size: 'sm' });
@@ -716,11 +717,11 @@ export function accessMembers(ctx = {}, editable = true) {
           },
         },
         {
-          key: 'lastLogin', label: t('Last sign-in'), width: '170px',
+          key: 'lastLogin', label: t('Last sign-in'), width: '130px',
           render: (u) => (u.pattern ? h('span', { class: 'text-muted' }, DASH) : (u.lastLogin ? fmt.dateTime(u.lastLogin) : h('span', { class: 'text-muted' }, t('Never')))),
         },
         {
-          key: 'actions', label: '', actions: true, sortable: false, width: '210px', align: 'right',
+          key: 'actions', label: '', actions: true, sortable: false, width: '185px', align: 'right',
           render: (u) => {
             if (!editable) return null;
             const btns = [];
@@ -742,7 +743,7 @@ export function accessMembers(ctx = {}, editable = true) {
               });
               btns.push(delBtn);
             }
-            return btns.length ? h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px' }, btns) : null;
+            return btns.length ? h('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '6px' } }, btns) : null;
           },
         },
       ],
@@ -765,12 +766,12 @@ export function accessMembers(ctx = {}, editable = true) {
 export function openAccessDrawer({ onChanged } = {}) {
   if (!requireAdmin(t('Add account / Manage access control'))) return;
   const controller = new AbortController();
-  const block = accessMembers({ signal: controller.signal, rerender: () => { if (onChanged) onChanged(); } }, isAdmin());
+  const block = accessMembers({ signal: controller.signal, inDrawer: true, rerender: () => { if (onChanged) onChanged(); } }, isAdmin());
   const d = openDrawer({
     title: t('Accounts & passwords'),
     subtitle: t('Create ID/Password accounts, change passwords (including admin), or pre-register Google accounts.'),
     content: block,
-    width: 860,
+    width: 920,
   });
   d.dialog.addEventListener('close', () => {
     controller.abort();
