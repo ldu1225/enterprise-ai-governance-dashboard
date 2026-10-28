@@ -260,7 +260,7 @@ def _agent_stream_card(svc):
         "known": True,
         "title": "{agent} Agent Telemetry",
         "titleParams": {"agent": pretty},
-        "what": "OpenTelemetry prompts, model responses (gen_ai.user.message, gen_ai.choice) and Cloud Run execution logs emitted by {agent}.",
+        "what": "Agent task execution, active sessions, model token usage, and cost telemetry emitted by {agent}.",
         "whatParams": {"agent": pretty},
         "category": catalog.AI,
         "sensitive": True,
@@ -404,7 +404,7 @@ def _enrich_connector_meta(ctx, item):
         proj = bq.get("project") or ctx.project
         item["project"] = proj
         item["projectScope"] = "single"
-        item["bigquerySink"] = "%s.%s.%s" % (proj, bq.get("dataset") or ds, bq.get("table") or "")
+        item["bigquerySink"] = "%s.%s" % (proj, bq.get("dataset") or ds)
         return None
     flt = ((item.get("logging") or {}).get("filter") or "").strip()
     m = AGENT_STREAM_RE.match(flt)

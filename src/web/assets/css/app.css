@@ -362,6 +362,7 @@ button.nav-item:hover { background: var(--hover); }
   box-shadow: var(--shadow-xs);
   display: flex; flex-direction: column;
   min-width: 0;
+  overflow: hidden;
 }
 .card-header {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
@@ -572,6 +573,7 @@ input[type="checkbox"].checkbox { width: 16px; height: 16px; accent-color: var(-
   height: 22px; padding: 0 8px;
   border-radius: 999px;
   font-size: 12px; font-weight: 550; white-space: nowrap;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis;
   border: 1px solid var(--neutral-border);
   background: var(--neutral-bg); color: var(--text-2);
 }
@@ -1054,10 +1056,16 @@ kbd {
 .access-you { margin-left: 8px; font-size: 11px; font-weight: 600; color: var(--accent-text); background: var(--accent-soft); border-radius: 999px; padding: 0 7px; line-height: 18px; display: inline-block; vertical-align: 1px; }
 
 /* ---------- Connector cards ---------- */
-.connector-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
-.connector-card { cursor: pointer; transition: border-color .12s var(--ease), box-shadow .12s var(--ease); }
+.connector-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; align-items: stretch; }
+.connector-card { cursor: pointer; transition: border-color .12s var(--ease), box-shadow .12s var(--ease); height: 100%; }
 .connector-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
-.connector-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+.connector-card .card-header { padding-bottom: 0; }
+.connector-card .card-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.35; }
+.connector-card .card-subtitle { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.9em; line-height: 1.45; margin-top: 4px; }
+.connector-card .card-body { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }
+.connector-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.connector-bottom { margin-top: auto; display: grid; gap: 10px; min-width: 0; padding-top: 4px; }
+.connector-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 2px; }
 .connector-stats .cs-label { font-size: 11.5px; color: var(--text-3); }
 .connector-stats .cs-value { font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; }
 
@@ -1130,8 +1138,8 @@ kbd {
 .src-toolbar .search-input { width: 280px; max-width: 100%; }
 .src-toolbar .search-input .input { height: 32px; font-size: 13px; }
 .src-group-title { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text-2); }
-.src-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 14px; }
-.src-card { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-xs); }
+.src-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 14px; align-items: stretch; }
+.src-card { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-xs); overflow: hidden; }
 .src-head { display: flex; gap: 12px; align-items: flex-start; }
 .src-icon { flex: 0 0 auto; display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: var(--radius); background: var(--surface-3); color: var(--text-2); }
 .src-ai .src-icon { background: color-mix(in srgb, #8B5CF6 14%, transparent); color: #7C3AED; }
@@ -1144,15 +1152,16 @@ kbd {
 .src-block { display: grid; gap: 6px; min-width: 0; }
 .src-label { font-size: 11.5px; font-weight: 600; color: var(--text-3); }
 .src-block .chip, .src-builtin-pages .chip { height: auto; min-height: 24px; white-space: normal; line-height: 1.35; padding: 3px 9px; }
-.src-code { display: block; font-family: var(--mono); font-size: 12px; line-height: 1.5; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px 8px; white-space: normal; overflow-wrap: anywhere; word-break: break-all; }
-.connector-card .src-code { margin-top: 2px; }
+.src-code { display: block; font-family: var(--mono); font-size: 12px; line-height: 1.5; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 8px; white-space: normal; overflow-wrap: anywhere; word-break: break-all; }
+.connector-card .src-code, .src-card .src-code { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; margin: 0; }
+.src-footer-wrap { margin-top: auto; display: grid; gap: 12px; min-width: 0; padding-top: 4px; }
 .src-activity { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--text-2); }
 .src-spark { display: inline-flex; flex: 0 0 auto; width: 72px; height: 24px; }
 .src-spark svg { width: 100%; height: 100%; }
 .src-note { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-radius: var(--radius); border: 1px solid var(--warning-border); background: var(--warning-bg); font-size: 12px; line-height: 1.5; color: var(--text-2); }
 .src-note > span { flex: 1 1 200px; }
 .src-note svg { flex: 0 0 auto; margin-top: 2px; color: var(--warning); }
-.src-actions { margin-top: auto; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.src-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
 .src-hint { font-size: 12px; color: var(--text-3); text-align: right; }
 .src-empty { padding: 14px 16px; border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); font-size: 13px; line-height: 1.5; color: var(--text-3); }
 .src-more > summary { cursor: pointer; width: fit-content; font-size: 13px; font-weight: 600; color: var(--text-2); }

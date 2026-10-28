@@ -84,10 +84,15 @@ function logIdOf(conn) {
   try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }
 }
 
+const AGENT_FILTER_RE = /^\s*\(?resource\.labels\.job="([A-Za-z0-9_-]+)"\s+OR\s+resource\.labels\.service_name="\1"\)?(?:\s+AND\s+.*)?$/;
+
 /** What a connector reads, for people: the log id, the table reference or the custom filter. */
 function sourceRef(conn) {
   if (conn.source === 'bigquery' && conn.bigquery) return `${conn.bigquery.project}.${conn.bigquery.dataset}.${conn.bigquery.table}`;
-  return logIdOf(conn) || (conn.logging && conn.logging.filter) || '';
+  const flt = (conn.logging && conn.logging.filter) || '';
+  const am = AGENT_FILTER_RE.exec(flt);
+  if (am) return `${am[1]} (CODEMENDER_COST_TELEMETRY)`;
+  return logIdOf(conn) || flt || '';
 }
 
 function rangeDays() {
@@ -323,9 +328,9 @@ function sourceCard(ctx, s, env) {
     h('div', { class: 'src-head' },
       h('span', { class: 'src-icon', 'aria-hidden': 'true' }, icon(cat.icon, { size: 16 })),
       h('div', { class: 'src-heading' },
-        h('h4', { class: 'src-title' }, sourceTitle(s)),
+        h('h4', { class: 'src-title', title: sourceTitle(s) }, sourceTitle(s)),
         h('div', { class: 'src-badges' },
-          s.project ? badge(s.project, 'neutral', { size: 'sm', mono: true }) : null,
+          s.project ? badge(s.project, 'info', { size: 'sm', dot: true }) : null,
           badge(s.kind === 'bigquery' ? 'BigQuery' : 'Cloud Logging', 'neutral', { size: 'sm' }),
           c.sensitive ? badge(t('Contains prompt or response text'), 'warning', { size: 'sm' }) : null,
           s.connectorId ? badge(t('Added'), 'success', { size: 'sm', dot: true }) : null))),
@@ -335,10 +340,11 @@ function sourceCard(ctx, s, env) {
       h('div', { class: 'chips' }, dashboardShows(s).map((x) => chip(x)))),
     activityLine(s, env.days),
     volumeNote(ctx, s, env),
-    h('div', { class: 'src-block' },
-      h('div', { class: 'src-label' }, s.kind === 'bigquery' ? t('BigQuery table') : t('Cloud Logging log name')),
-      h('code', { class: 'src-code' }, s.tech)),
-    h('div', { class: 'src-actions' }, sourceAction(ctx, s, env)));
+    h('div', { class: 'src-footer-wrap' },
+      h('div', { class: 'src-block' },
+        h('div', { class: 'src-label' }, s.kind === 'bigquery' ? t('BigQuery table') : t('Cloud Logging log name')),
+        h('code', { class: 'src-code', title: s.tech }, s.tech)),
+      h('div', { class: 'src-actions' }, sourceAction(ctx, s, env))));
 }
 
 async function quickAdd(ctx, s, btn) {
@@ -405,17 +411,23 @@ function connectorCard(ctx, c) {
     h('div', null, h('div', { class: 'cs-label' }, t('Events')), h('div', { class: 'cs-value' }, '\u2026')),
     h('div', null, h('div', { class: 'cs-label' }, t('Users')), h('div', { class: 'cs-value' }, '\u2026')),
     h('div', null, h('div', { class: 'cs-label' }, t('Tokens')), h('div', { class: 'cs-value' }, '\u2026')));
-  const sparkHost = h('div');
+  const sparkHost = h('div', { class: 'connector-spark' });
   sparkHost.style.setProperty('height', '30px');
-  const metaRow = h('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap', marginBottom: '6px' } },
-    projId ? badge(t('Project: {id}', { id: projId }), 'info', { size: 'sm', dot: true }) : null,
-    c.bigquerySink ? badge(t('BigQuery linked: {dest}', { dest: c.bigquerySink }), 'success', { size: 'sm', dot: true }) : null);
+  const metaRow = h('div', { class: 'connector-meta' },
+    projId ? badge(projId, 'info', { size: 'sm', dot: true, title: t('Project: {id}', { id: projId }) }) : null,
+    badge(c.source === 'bigquery' ? 'BigQuery' : 'Cloud Logging', 'neutral', { size: 'sm' }),
+    c.source === 'logging' && c.bigquerySink ? badge(t('BQ sink linked'), 'success', { size: 'sm', dot: true, title: t('BigQuery linked: {dest}', { dest: c.bigquerySink }) }) : null);
+  const fullRef = `${c.source === 'bigquery' ? 'BigQuery' : 'Cloud Logging'} \u00b7 ${sourceRef(c)}`;
+  const bottom = h('div', { class: 'connector-bottom' },
+    h('code', { class: 'src-code', title: fullRef }, fullRef),
+    stats,
+    sparkHost);
   const el = card({
     cls: 'connector-card',
     title: c.name,
     subtitle: c.catalog ? cardWhat(c.catalog) : t('Custom connector set up by an administrator.'),
     actions: c.enabled ? badge(t('Enabled'), 'success', { size: 'sm', dot: true }) : badge(t('Disabled'), 'neutral', { size: 'sm' }),
-    body: h('div', null, metaRow, h('code', { class: 'src-code' }, `${c.source === 'bigquery' ? 'BigQuery' : 'Cloud Logging'} \u00b7 ${sourceRef(c)}`), stats, sparkHost),
+    body: [metaRow, bottom],
     footer: h('span', null, c.lastEvent ? t('Last event {time}', { time: fmt.relative(c.lastEvent) }) : t('No events yet')),
     source: c.health === 'error' ? t('Source error') : null,
   });
@@ -536,9 +548,9 @@ async function renderConnector(ctx, id) {
   }));
   mount(body);
   body.append(h('div', { class: 'tx-source' },
-    connProj ? badge(t('Data project: {id} (Single project)', { id: connProj }), 'info', { size: 'sm', dot: true }) : null,
-    c.bigquerySink ? badge(t('BigQuery sink: {dest}', { dest: c.sinkName ? `${c.bigquerySink} (${c.sinkName})` : c.bigquerySink }), 'success', { size: 'sm', dot: true }) : null,
+    connProj ? badge(t('Project: {id}', { id: connProj }), 'info', { size: 'sm', dot: true }) : null,
     badge(c.source === 'bigquery' ? 'BigQuery' : 'Cloud Logging', 'neutral', { size: 'sm' }),
+    c.bigquerySink ? badge(t('BigQuery linked: {dest}', { dest: c.bigquerySink }), 'success', { size: 'sm', dot: true }) : null,
     h('code', { class: 'src-code' }, sourceRef(c))));
   const sample = d.sample || null;
   const partial = Boolean(sample && sample.partial);
@@ -603,7 +615,7 @@ async function renderConnector(ctx, id) {
   if (m.model) {
     extra.push(card({
       title: t('Top models'), flush: true,
-      body: dataTable({ columns: [{ key: 'model', label: t('Model'), render: (r) => h('span', { class: 'cell-mono cell-wrap' }, r.model || DASH) }, { key: 'events', label: t('Events'), align: 'num', format: fmt.int }, { key: 'tokens', label: tokensLabel, align: 'num', format: fmt.compact }], rows: d.topModels || [], searchable: false, pageSize: 8, initialSort: { key: 'events', dir: 'desc' } }),
+      body: dataTable({ columns: [{ key: 'model', label: t('Model'), render: (r) => h('span', { class: 'cell-mono' }, r.model || DASH) }, { key: 'events', label: t('Events'), align: 'num', format: fmt.int }, { key: 'tokens', label: tokensLabel, align: 'num', format: fmt.compact }], rows: d.topModels || [], searchable: false, pageSize: 8, initialSort: { key: 'events', dir: 'desc' } }),
     }));
   }
   if (extra.length) {
@@ -618,18 +630,18 @@ async function renderConnector(ctx, id) {
   const hasPayload = (recent || []).some((r) => r.payload);
   const cols = [
     { key: 'time', label: t('Time'), render: (r) => fmt.dateTime(r.time, true), value: (r) => r.time },
-    { key: 'project', label: t('Project'), render: (r) => badge(r.project || connProj || DASH, 'neutral', { size: 'sm', mono: true }), value: (r) => r.project || connProj || '' },
+    { key: 'project', label: t('Project'), render: (r) => badge(r.project || connProj || DASH, 'neutral', { size: 'sm' }), value: (r) => r.project || connProj || '' },
   ];
-  if (m.user) cols.push({ key: 'user', label: t('User'), render: (r) => h('span', { class: 'cell-wrap' }, r.user || DASH) });
+  if (m.user) cols.push({ key: 'user', label: t('User'), render: (r) => h('span', { class: 'cell-mono truncate', style: { maxWidth: '180px' }, title: r.user || '' }, r.user || DASH) });
   if (m.operation) {
     cols.push({
       key: 'operation', label: opLabel,
       render: (r) => (r.operation && opNames[r.operation]
-        ? h('div', { class: 'cell-stack' }, h('span', { class: 'cell-main cell-wrap' }, opNames[r.operation]), h('span', { class: 'cell-sub cell-mono cell-wrap' }, r.operation))
-        : h('span', { class: 'cell-mono cell-wrap' }, r.operation || DASH)),
+        ? h('div', { class: 'cell-stack' }, h('span', { class: 'cell-main truncate', style: { maxWidth: '240px' }, title: opNames[r.operation] }, opNames[r.operation]), h('span', { class: 'cell-sub cell-mono truncate', style: { maxWidth: '240px' }, title: r.operation }, r.operation))
+        : h('span', { class: 'cell-mono truncate', style: { maxWidth: '240px' }, title: r.operation || '' }, r.operation || DASH)),
     });
   }
-  if (m.model) cols.push({ key: 'model', label: t('Model'), render: (r) => h('span', { class: 'cell-mono cell-wrap' }, r.model || DASH) });
+  if (m.model) cols.push({ key: 'model', label: t('Model'), render: (r) => h('span', { class: 'cell-mono' }, r.model || DASH) });
   if (m.tokens) cols.push({ key: 'tokens', label: tokensLabel, align: 'num', format: fmt.int });
   if (m.status) cols.push({ key: 'status', label: statusLabel, render: (r) => (r.status !== null && r.status !== undefined ? badge(statusOf(r.status), 'neutral', { size: 'sm' }) : DASH) });
   if (hasMessage) cols.push({ key: 'message', label: t('Message'), sortable: false, render: (r) => h('span', { class: 'cell-wrap tx-message' }, r.message || DASH) });
