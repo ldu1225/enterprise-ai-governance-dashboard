@@ -431,6 +431,35 @@ PY
     )
     run gcloud projects add-iam-policy-binding "$PROJECT_ID" --member "serviceAccount:${SA_EMAIL}" \
       --role roles/iap.admin --condition=None --quiet >/dev/null 2>&1 || true
+    # Ensure a custom IAP OAuth client is attached to the sign-in bridge so out-of-org Google accounts
+    # (when permitted by the project's OAuth brand) are not rejected by Cloud Run IAP's default in-org client.
+    if [[ "$DRY_RUN" -eq 0 ]]; then
+      IAP_BRAND="projects/${PROJECT_NUMBER}/brands/${PROJECT_NUMBER}"
+      IAP_CLIENT_JSON="$(gcloud iap oauth-clients list "$IAP_BRAND" --project="$PROJECT_ID" --format=json 2>/dev/null || echo "[]")"
+      if [[ "$IAP_CLIENT_JSON" == "[]" || -z "$IAP_CLIENT_JSON" ]]; then
+        gcloud iap oauth-clients create "$IAP_BRAND" --display_name="${SERVICE_NAME}-iap" --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
+        IAP_CLIENT_JSON="$(gcloud iap oauth-clients list "$IAP_BRAND" --project="$PROJECT_ID" --format=json 2>/dev/null || echo "[]")"
+      fi
+      IAP_SETTINGS_FILE="$(mktemp)"
+      if python3 - "$IAP_CLIENT_JSON" "$IAP_SETTINGS_FILE" <<'PY'
+import json, sys
+clients = json.loads(sys.argv[1] or "[]")
+if not clients:
+    sys.exit(1)
+c = clients[0]
+cid = c.get("name", "").rpartition("/")[2]
+secret = c.get("secret", "")
+if not cid or not secret:
+    sys.exit(1)
+with open(sys.argv[2], "w", encoding="utf-8") as fh:
+    fh.write(f"access_settings:\n  oauth_settings:\n    client_id: {cid}\n    client_secret: {secret}\n")
+PY
+      then
+        gcloud iap settings set "$IAP_SETTINGS_FILE" --project="$PROJECT_ID" --resource-type=cloud-run --region="$REGION" --service="$BRIDGE_NAME" --quiet >/dev/null 2>&1 \
+          && info "sign-in bridge custom IAP OAuth client configured" || true
+      fi
+      rm -f "$IAP_SETTINGS_FILE"
+    fi
     ENV_VARS+="##AUTH_MODE=google##SIGN_IN_BRIDGE_URL=${BRIDGE_URL}##PUBLIC_BASE_URL=${BASE_URL}"
     run gcloud run deploy "$SERVICE_NAME" "${MAIN[@]}" --no-iap --no-invoker-iam-check \
       --memory "$MEMORY" --cpu "$CPU" --min-instances "$MIN_INSTANCES" --max-instances "$MAX_INSTANCES" --timeout 300 \
