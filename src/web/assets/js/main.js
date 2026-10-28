@@ -201,6 +201,35 @@ function buildShell() {
 function workspaceChip() {
   const ws = store.boot.workspace || {};
   if (!ws.projectId) return null;
+  const projects = Array.isArray(ws.projects) && ws.projects.length ? ws.projects : [ws.projectId];
+  if (projects.length > 1) {
+    return h('button', {
+      type: 'button',
+      class: 'workspace-chip',
+      style: 'cursor:pointer',
+      title: projects.join(', '),
+      onclick: () => openDrawer({
+        title: t('Scanned Google Cloud projects ({n})', { n: projects.length }),
+        subtitle: t('Projects actively scanned across Agent Registry, Deployments, Gemini Enterprise, Cloud Monitoring and Telemetry.'),
+        width: 560,
+        content: (body, close) => {
+          body.append(
+            card({
+              title: t('Active organization projects'),
+              body: h('div', { class: 'stack-sm' }, projects.map((p) => h('div', { class: 'row', style: 'justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border-subtle)' },
+                h('span', { class: 'mono fw-600' }, p),
+                badge(p === ws.projectId ? t('Primary workspace') : t('Auto-discovered'), p === ws.projectId ? 'info' : 'success', { size: 'sm', dot: true })))),
+            }),
+            h('div', { class: 'row wrap' },
+              button({ label: t('Agent Registry'), icon: 'layers', variant: 'primary', size: 'sm', onClick: () => { close(); navigate('#/registry'); } }),
+              button({ label: t('Deployments'), icon: 'cpu', size: 'sm', onClick: () => { close(); navigate('#/deployments'); } }),
+              button({ label: t('Workspace and data sources'), icon: 'database', size: 'sm', onClick: () => { close(); navigate('#/settings/workspace'); } })));
+        },
+      }),
+    },
+      h('span', { class: 'ws-label' }, t('Projects ({n})', { n: projects.length })),
+      h('span', { class: 'ws-value' }, `${ws.projectId} +${projects.length - 1}`));
+  }
   return h('div', { class: 'workspace-chip', title: ws.projectId },
     h('span', { class: 'ws-label' }, t('Project')),
     h('span', { class: 'ws-value' }, ws.projectId));

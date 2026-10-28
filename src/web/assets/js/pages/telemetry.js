@@ -154,7 +154,7 @@ function buildSources(discovery) {
   const out = tables.map((tb) => {
     const log = logsById.get(tb.id) || {};
     return {
-      kind: 'bigquery', id: tb.id, card: tb.catalog || null, quick: tb.quickAdd || null,
+      kind: 'bigquery', id: tb.id, project: tb.project || null, card: tb.catalog || null, quick: tb.quickAdd || null,
       connectorId: tb.connectorId || log.connectorId || null, core: Boolean(tb.core),
       tech: `${tb.project}.${tb.dataset}.${tb.table}`, rows: tb.rows, lastModified: tb.lastModified,
       entries7d: tb.entries7d, daily: tb.daily, logName: log.logName || null,
@@ -163,7 +163,7 @@ function buildSources(discovery) {
   logs.forEach((lg) => {
     if (lg.routedToBigQuery && tableIds.has(lg.id)) return;
     out.push({
-      kind: 'logging', id: lg.id, card: lg.catalog || null, quick: lg.quickAdd || null, connectorId: lg.connectorId || null,
+      kind: 'logging', id: lg.id, project: lg.project || null, card: lg.catalog || null, quick: lg.quickAdd || null, connectorId: lg.connectorId || null,
       core: Boolean(lg.core), tech: lg.shortName, rows: null, lastModified: null, entries7d: lg.entries7d, daily: lg.daily,
       logName: lg.logName,
     });
@@ -315,6 +315,7 @@ function sourceCard(ctx, s, env) {
       h('div', { class: 'src-heading' },
         h('h4', { class: 'src-title' }, sourceTitle(s)),
         h('div', { class: 'src-badges' },
+          s.project ? badge(s.project, 'neutral', { size: 'sm', mono: true }) : null,
           badge(s.kind === 'bigquery' ? 'BigQuery' : 'Cloud Logging', 'neutral', { size: 'sm' }),
           c.sensitive ? badge(t('Contains prompt or response text'), 'warning', { size: 'sm' }) : null,
           s.connectorId ? badge(t('Added'), 'success', { size: 'sm', dot: true }) : null))),

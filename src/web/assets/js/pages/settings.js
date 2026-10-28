@@ -236,7 +236,7 @@ function workspace(ctx, panel, data, editable) {
   const tzOptions = ['UTC', 'Asia/Seoul', 'Asia/Tokyo', 'Asia/Singapore', 'Asia/Shanghai', 'Asia/Kolkata', 'Europe/London', 'Europe/Berlin', 'Europe/Paris', 'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'Australia/Sydney'];
   const curTz = getPath(data.effective, ['workspace', 'timezone']);
   if (curTz && !tzOptions.includes(curTz)) tzOptions.unshift(curTz);
-  const activeProjects = (store.get().meta && store.get().meta.workspace && store.get().meta.workspace.projects) || [];
+  const activeProjects = (store.boot && store.boot.workspace && store.boot.workspace.projects) || [];
   if (activeProjects.length > 0) {
     panel.append(card({
       title: t('Scanned Google Cloud projects ({n})', { n: activeProjects.length }),
