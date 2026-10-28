@@ -78,10 +78,7 @@ def all_connectors(ctx):
 
 
 def discover_datasets(ctx):
-    out = []
-    for proj in ctx.projects:
-        if (proj, ctx.audit_dataset) not in out:
-            out.append((proj, ctx.audit_dataset))
+    out = [(ctx.project, ctx.audit_dataset)]
     for ref in ctx.ws.get("telemetry_datasets") or []:
         parsed = config.parse_dataset_ref(ref, ctx.project)
         if parsed and parsed not in out:
@@ -169,7 +166,7 @@ def _list_logs(ctx):
     """[{logName, shortName}] across scanned projects, or None when the log list failed."""
     tasks = {proj: (lambda p=proj: ctx.gcp.paginate("%s/projects/%s/logs" % (LOGGING_V2, p),
                                                     quota_project=ctx.quota_project, items_key="logNames",
-                                                    page_size=1000, max_pages=5))
+                                                    page_size=500, max_pages=1))
              for proj in ctx.projects}
     results = ctx.run(tasks)
     out = []
@@ -267,8 +264,8 @@ def _agent_stream_card(svc):
         "whatParams": {"agent": pretty},
         "category": catalog.AI,
         "sensitive": True,
-        "operationLabel": "Log / Event",
-        "statusLabel": "Severity",
+        "operationLabel": "Agent command / task",
+        "statusLabel": "Execution phase",
         "tokensLabel": "Total tokens",
         "builtIn": [],
     }
@@ -277,11 +274,11 @@ def _agent_stream_card(svc):
 def _agent_stream_mapping(mapping=None):
     out = dict(mapping or {})
     out["time"] = out.get("time") or "timestamp"
-    out["operation"] = out.get("operation") or "logName"
-    out["status"] = out.get("status") or "severity"
-    out["user"] = out.get("user") or "jsonPayload.codemender_cost.session_id"
-    out["model"] = out.get("model") or "labels.model"
-    out["tokens"] = out.get("tokens") or "jsonPayload.codemender_cost.total_tokens"
+    out["operation"] = "jsonPayload.codemender_cost.operation"
+    out["status"] = "labels.operation_type"
+    out["user"] = "jsonPayload.codemender_cost.session_id"
+    out["model"] = "labels.model"
+    out["tokens"] = "jsonPayload.codemender_cost.total_tokens"
     return out
 
 
@@ -297,7 +294,7 @@ def _logging_resource_names(ctx, flt):
 
 
 def _discover_agent_streams(ctx):
-    """Discovers per-agent OpenTelemetry / ADK Cloud Run telemetry streams."""
+    """Discovers per-agent ADK / Cost Telemetry execution streams."""
     if type(getattr(ctx, "gcp", None)).__name__ != "Gcp":
         return [], {}
     tz = timeutil.get_zone(ctx.tz_name)
@@ -309,13 +306,15 @@ def _discover_agent_streams(ctx):
     body = {
         "resourceNames": ["projects/%s" % p],
         "filter": (
-            '((logName="projects/%s/logs/gen_ai.user.message" OR logName="projects/%s/logs/gen_ai.choice") '
-            'OR (resource.type="cloud_run_revision" AND labels."created-by"="adk" AND severity>="INFO" '
-            'AND NOT (logName:"run.googleapis.com%%2Frequests" AND httpRequest.status=403))) AND timestamp>="%s"'
+            '((resource.type="cloud_run_revision" AND (jsonPayload.event_type="CODEMENDER_COST_TELEMETRY" '
+            'OR (labels."created-by"="adk" AND severity>="INFO" '
+            'AND NOT logName:"run.googleapis.com%%2Frequests" AND NOT logName:"varlog%%2Fsystem"))) '
+            'OR logName="projects/%s/logs/gen_ai.user.message" OR logName="projects/%s/logs/gen_ai.choice") '
+            'AND timestamp>="%s"'
             % (p, p, since)
         ),
         "orderBy": "timestamp desc",
-        "pageSize": 150,
+        "pageSize": 200,
     }
     try:
         data = ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body=body, timeout=6)
@@ -337,12 +336,16 @@ def _discover_agent_streams(ctx):
             continue
         if svc.startswith("ai-control-plane"):
             continue
+        payload = entry.get("jsonPayload") if isinstance(entry.get("jsonPayload"), dict) else {}
+        is_cost = payload.get("event_type") == "CODEMENDER_COST_TELEMETRY" or isinstance(payload.get("codemender_cost"), dict)
         key = (proj, svc)
         item = found.get(key)
         if item is None:
-            item = {"project": proj, "service": svc, "entries30d": 0, "daily": [0] * ACTIVITY_DAYS}
+            item = {"project": proj, "service": svc, "entries30d": 0, "cost_entries": 0, "daily": [0] * ACTIVITY_DAYS}
             found[key] = item
         item["entries30d"] += 1
+        if is_cost:
+            item["cost_entries"] += 1
         ts = parse_rfc3339(entry.get("timestamp"))
         if ts is not None:
             day = ts.astimezone(tz).date()
@@ -355,7 +358,10 @@ def _discover_agent_streams(ctx):
         pretty = ("CodeMender (%s)" % svc) if "codemender" in svc.lower() else svc
         flt = 'resource.labels.job="%s" OR resource.labels.service_name="%s"' % (svc, svc)
         sink_flt = (
-            '(%s) AND NOT (logName:"run.googleapis.com%%2Frequests" AND httpRequest.status=403)' % flt
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="%s" '
+            'AND jsonPayload.event_type="CODEMENDER_COST_TELEMETRY"' % svc
+            if info["cost_entries"]
+            else '(%s) AND NOT logName:"run.googleapis.com%%2Frequests" AND NOT logName:"varlog%%2Fsystem"' % flt
         )
         card = _agent_stream_card(svc)
         quick = {
@@ -366,11 +372,11 @@ def _discover_agent_streams(ctx):
             "logging": {"filter": flt},
             "mapping": _agent_stream_mapping(),
         }
-        entries_recent = sum(info["daily"]) or info["entries30d"]
+        entries_recent = info["cost_entries"] or sum(info["daily"]) or info["entries30d"]
         out.append({
             "id": sid,
             "logName": "projects/%s/logs/%s" % (proj, svc),
-            "shortName": "%s (gen_ai.user.message · gen_ai.choice · Cloud Run)" % svc,
+            "shortName": "%s (CODEMENDER_COST_TELEMETRY · %s)" % (svc, proj) if info["cost_entries"] else "%s (%s)" % (svc, proj),
             "sinkFilter": sink_flt,
             "project": proj,
             "routedToBigQuery": False,
@@ -385,14 +391,45 @@ def _discover_agent_streams(ctx):
     return out, short_counts
 
 
-def discover(ctx):
-    """Every telemetry source of the project, described in plain language.
+def _enrich_connector_meta(ctx, item):
+    item.setdefault("bigquery", None)
+    item.setdefault("logging", None)
+    ds = (
+        (ctx.ws.get("analytics_dataset") if hasattr(ctx, "ws") and isinstance(ctx.ws, dict) else None)
+        or getattr(ctx, "audit_dataset", None)
+        or "ge_analytics"
+    )
+    if item.get("source") == "bigquery" and isinstance(item.get("bigquery"), dict):
+        bq = item["bigquery"]
+        proj = bq.get("project") or ctx.project
+        item["project"] = proj
+        item["projectScope"] = "single"
+        item["bigquerySink"] = "%s.%s.%s" % (proj, bq.get("dataset") or ds, bq.get("table") or "")
+        return None
+    flt = ((item.get("logging") or {}).get("filter") or "").strip()
+    m = AGENT_STREAM_RE.match(flt)
+    extracted = re.findall(r"projects/([a-z][a-z0-9\-]{4,29})/logs/", flt)
+    extracted += re.findall(r'project_id\s*=\s*"([a-z][a-z0-9\-]{4,29})"', flt)
+    if m:
+        svc = m.group(1)
+        item["mapping"] = _agent_stream_mapping(item.get("mapping"))
+        item["project"] = item.get("project") or (extracted[0] if extracted else ctx.project)
+        item["projectScope"] = "single"
+        item["sinkName"] = item.get("sinkName") or ("cp_sink_agent_stream_%s" % catalog.sanitize_log_name(svc))
+        item["bigquerySink"] = item.get("bigquerySink") or ("%s.%s" % (ctx.project, ds))
+        return svc
+    if extracted:
+        item["project"] = extracted[0]
+        item["projectScope"] = "single"
+        if item.get("sinkName") and not item.get("bigquerySink"):
+            item["bigquerySink"] = "%s.%s" % (ctx.project, ds)
+    else:
+        item["project"] = item.get("project") or ctx.project
+        item["projectScope"] = item.get("projectScope") or "single"
+    return None
 
-    tables is null when no dataset could be scanned and logs is null when the log list failed. Each source has
-    `catalog` (what the data is and what its dashboard shows), `quickAdd` (a ready body for
-    POST /api/v1/telemetry/connectors, null when the source cannot be added) and `connectorId` (the connector
-    that already reads it). entries7d/daily are the entries written per day over the last 7 days according to
-    Cloud Monitoring; they are null when that metric could not be read."""
+
+def _compute_discover(ctx):
     by_table, by_log, by_filter = {}, {}, {}
     for conn in all_connectors(ctx):
         bq = conn.get("bigquery") or {}
@@ -448,6 +485,15 @@ def discover(ctx):
     return {"tables": tables, "logs": logs, "activityDays": ACTIVITY_DAYS}
 
 
+def discover(ctx):
+    """Every telemetry source of the project, described in plain language."""
+    if type(getattr(ctx, "gcp", None)).__name__ == "Gcp" and getattr(ctx, "app", None):
+        key = ("telemetry_discover", ctx.project, tuple(getattr(ctx, "projects", None) or [ctx.project]), getattr(ctx, "version", 0))
+        val, _ = ctx.app.cache.get_or_compute(key, HEALTH_TTL, lambda: _compute_discover(ctx))
+        return copy.deepcopy(val)
+    return _compute_discover(ctx)
+
+
 # ---------------------------------------------------------------------------
 # Connectors
 # ---------------------------------------------------------------------------
@@ -471,8 +517,7 @@ def _connector_health(ctx, conn):
         if m:
             flt = (
                 'resource.type="cloud_run_revision" AND resource.labels.service_name="%s" '
-                'AND severity>="INFO" AND NOT logName:"varlog%%2Fsystem" '
-                'AND NOT (logName:"run.googleapis.com%%2Frequests" AND httpRequest.status=403)'
+                'AND jsonPayload.event_type="CODEMENDER_COST_TELEMETRY"'
                 % m.group(1)
             )
         since = iso(dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30))
@@ -489,17 +534,12 @@ def _connector_health(ctx, conn):
 
 def with_health(ctx, conn):
     item = copy.deepcopy(conn)
-    item.setdefault("bigquery", None)
-    item.setdefault("logging", None)
-    flt = ((item.get("logging") or {}).get("filter") or "").strip()
-    m = AGENT_STREAM_RE.match(flt)
-    if m:
-        item["mapping"] = _agent_stream_mapping(item.get("mapping"))
+    svc = _enrich_connector_meta(ctx, item)
     key = ("connector_health", json.dumps(item, sort_keys=True, default=str))
     (health, last), _ = ctx.app.cache.get_or_compute(key, HEALTH_TTL, lambda: _connector_health(ctx, item))
     item["health"] = health
     item["lastEvent"] = last
-    item["catalog"] = _agent_stream_card(m.group(1)) if m else catalog.for_connector(item)
+    item["catalog"] = _agent_stream_card(svc) if svc else catalog.for_connector(item)
     return item
 
 
@@ -794,26 +834,22 @@ def _get_path(obj, path):
     if not isinstance(obj, dict):
         return None
     if path == "logName":
-        payload = obj.get("jsonPayload") if isinstance(obj.get("jsonPayload"), dict) else {}
-        cc = payload.get("codemender_cost") if isinstance(payload.get("codemender_cost"), dict) else None
-        if cc:
-            op_val = cc.get("operation") or cc.get("operation_type") or (obj.get("labels") or {}).get("operation_type")
-            if op_val:
-                return str(op_val)
-        req = obj.get("httpRequest") if isinstance(obj.get("httpRequest"), dict) else None
-        if req and (req.get("requestMethod") or req.get("requestUrl")):
-            url_path = urllib.parse.urlsplit(req.get("requestUrl") or "").path
-            if url_path:
-                return "%s %s (%s)" % (req.get("requestMethod") or "POST", url_path, req.get("status") or 200)
         ln = obj.get("logName")
         if isinstance(ln, str) and "/logs/" in ln:
             return urllib.parse.unquote(ln.split("/logs/", 1)[1])
-    elif path == "severity":
-        sev = obj.get("severity")
-        if sev:
-            return sev
-        if "gen_ai." in (obj.get("logName") or ""):
-            return "INFO"
+    elif path == "jsonPayload.codemender_cost.operation":
+        payload = obj.get("jsonPayload") if isinstance(obj.get("jsonPayload"), dict) else {}
+        cc = payload.get("codemender_cost") if isinstance(payload.get("codemender_cost"), dict) else {}
+        val = cc.get("operation") or cc.get("operation_type") or (obj.get("labels") or {}).get("operation_type")
+        return str(val).strip() if val else None
+    elif path == "labels.operation_type":
+        labels = obj.get("labels") if isinstance(obj.get("labels"), dict) else {}
+        if labels.get("operation_type"):
+            return str(labels["operation_type"])
+        payload = obj.get("jsonPayload") if isinstance(obj.get("jsonPayload"), dict) else {}
+        cc = payload.get("codemender_cost") if isinstance(payload.get("codemender_cost"), dict) else {}
+        if cc.get("operation_type"):
+            return str(cc["operation_type"])
         return None
     elif path == "labels.model":
         labels = obj.get("labels") if isinstance(obj.get("labels"), dict) else {}
@@ -823,14 +859,12 @@ def _get_path(obj, path):
         cc = payload.get("codemender_cost") if isinstance(payload.get("codemender_cost"), dict) else {}
         if cc.get("model") or cc.get("model_used"):
             return cc.get("model") or cc.get("model_used")
-        if "gen_ai." in (obj.get("logName") or ""):
-            return "gemini-3.8-flash"
         return None
     elif path == "jsonPayload.codemender_cost.session_id":
         payload = obj.get("jsonPayload") if isinstance(obj.get("jsonPayload"), dict) else {}
         cc = payload.get("codemender_cost") if isinstance(payload.get("codemender_cost"), dict) else {}
-        val = cc.get("session_id") or cc.get("run_id")
-        return val if val else None
+        val = cc.get("session_id") or cc.get("workspace_id") or cc.get("run_id")
+        return str(val) if val else None
     cur = obj
     for seg in path.split("."):
         m = SEGMENT_RE.match(seg)
@@ -852,9 +886,45 @@ def _get_path(obj, path):
 
 def _log_message(entry):
     """The human-readable line of a LogEntry: textPayload, a JSON message or an audit status message."""
+    payload = entry.get("jsonPayload") if isinstance(entry.get("jsonPayload"), dict) else {}
+    cc = payload.get("codemender_cost") if isinstance(payload.get("codemender_cost"), dict) else None
+    if cc:
+        op = cc.get("operation") or cc.get("operation_type") or (entry.get("labels") or {}).get("operation_type") or "run"
+        run_id = cc.get("run_id") or ""
+        in_tok = cc.get("input_tokens")
+        out_tok = cc.get("output_tokens")
+        think_tok = cc.get("thinking_tokens")
+        usd = cc.get("total_cost_usd")
+        krw = cc.get("total_cost_krw")
+        dur = cc.get("duration_ms")
+        patches = cc.get("patches_applied")
+        vulns = cc.get("verified_vulns")
+        parts = ["[%s]" % op]
+        if run_id:
+            parts.append("run=%s" % run_id)
+        tok_parts = []
+        if in_tok is not None:
+            tok_parts.append("in=%s" % in_tok)
+        if out_tok is not None:
+            tok_parts.append("out=%s" % out_tok)
+        if think_tok:
+            tok_parts.append("think=%s" % think_tok)
+        if tok_parts:
+            parts.append("tokens(%s)" % ", ".join(tok_parts))
+        if usd is not None:
+            cost_str = "$%.6f" % float(usd)
+            if krw is not None:
+                cost_str += " (₩%.3f)" % float(krw)
+            parts.append("cost=%s" % cost_str)
+        if patches:
+            parts.append("patches=%s" % patches)
+        if vulns:
+            parts.append("vulns=%s" % vulns)
+        if dur is not None:
+            parts.append("%sms" % dur)
+        return " · ".join(parts)[:MESSAGE_CHARS]
     text = entry.get("textPayload")
     if not isinstance(text, str):
-        payload = entry.get("jsonPayload") if isinstance(entry.get("jsonPayload"), dict) else {}
         text = next((payload[k] for k in ("message", "msg", "error") if isinstance(payload.get(k), str)), None)
         if not isinstance(text, str):
             content = payload.get("content") if isinstance(payload.get("content"), dict) else {}
@@ -896,7 +966,12 @@ def _message_expr(schema):
     candidates = ["textPayload", "jsonPayload.message"]
     candidates += ["%s.message" % node.name for name, node in schema.tree.items()
                    if name.startswith("jsonpayload") and name != "jsonpayload"]
-    candidates.append("protopayload_auditlog.status.message")
+    candidates.extend([
+        "protopayload_auditlog.status.message",
+        "schemaErrorDetail",
+        "jsonPayload.gen_ai_output_messages[0].parts[0].content",
+        "jsonPayload.content.parts[0].text",
+    ])
     sql = expr("t", schema, *candidates, cast="STRING")
     return "SUBSTR(%s, 1, %d)" % (sql, MESSAGE_CHARS) if sql else "CAST(NULL AS STRING)"
 
@@ -977,9 +1052,11 @@ def _bq_data(ctx, conn, rng, out):
         ctx.warn_error(label, rows, "The connector table")
     ok, rows = res["recent"]
     if ok:
-        out["recent"] = [{"time": iso(r.get("ts")), "user": r.get("user"), "operation": r.get("operation"),
-                          "model": r.get("model"), "tokens": to_int(r.get("tokens")) if r.get("tokens") is not None
-                          else None, "status": r.get("status"), "message": r.get("message") or None,
+        bq_proj = (conn.get("bigquery") or {}).get("project") or ctx.project
+        out["recent"] = [{"time": iso(r.get("ts")), "project": str(bq_proj), "user": r.get("user"),
+                          "operation": r.get("operation"), "model": r.get("model"),
+                          "tokens": to_int(r.get("tokens")) if r.get("tokens") is not None else None,
+                          "status": r.get("status"), "message": r.get("message") or None,
                           "payload": r.get("payload")} for r in rows]
     else:
         ctx.warn_error(label, rows, "The connector table")
@@ -1006,34 +1083,28 @@ def _logging_data(ctx, conn, rng, out):
     try:
         if agent_match:
             svc = agent_match.group(1)
-            proj = ctx.project
             ts_clause = 'timestamp>="%s" AND timestamp<"%s"' % (iso(query_start), iso(rng.end_ts()))
-            f_genai = (
-                '(logName="projects/%s/logs/gen_ai.user.message" OR logName="projects/%s/logs/gen_ai.choice") '
-                'AND resource.labels.job="%s" AND %s' % (proj, proj, svc, ts_clause)
-            )
-            f_run = (
+            f_cost = (
                 'resource.type="cloud_run_revision" AND resource.labels.service_name="%s" '
-                'AND (jsonPayload.event_type="CODEMENDER_COST_TELEMETRY" '
-                'OR (logName="projects/%s/logs/run.googleapis.com%%2Frequests" AND httpRequest.status!=403) '
-                'OR (logName="projects/%s/logs/run.googleapis.com%%2Fstdout" AND severity>="INFO")) AND %s'
-                % (svc, proj, proj, ts_clause)
+                'AND jsonPayload.event_type="CODEMENDER_COST_TELEMETRY" AND %s'
+                % (svc, ts_clause)
             )
-            res = ctx.run({
-                "genai": lambda: ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body={
-                    "resourceNames": resource_names, "filter": f_genai, "orderBy": "timestamp desc", "pageSize": 300,
-                }, timeout=8),
-                "run": lambda: ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body={
-                    "resourceNames": resource_names, "filter": f_run, "orderBy": "timestamp desc", "pageSize": 500,
-                }, timeout=8),
-            })
-            for k in ("genai", "run"):
-                ok, data = res[k]
-                if ok and isinstance(data, dict):
-                    entries.extend(e for e in data.get("entries") or [] if isinstance(e, dict))
-                elif not ok and not entries:
-                    raise data
-            entries.sort(key=lambda e: e.get("timestamp") or "", reverse=True)
+            data = ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body={
+                "resourceNames": resource_names, "filter": f_cost, "orderBy": "timestamp desc", "pageSize": 500,
+            }, timeout=8)
+            entries.extend(e for e in (data or {}).get("entries") or [] if isinstance(e, dict))
+            if not entries:
+                f_adk = (
+                    'resource.type="cloud_run_revision" AND resource.labels.service_name="%s" '
+                    'AND labels."created-by"="adk" AND severity>="INFO" '
+                    'AND NOT logName:"run.googleapis.com%%2Frequests" '
+                    'AND NOT logName:"varlog%%2Fsystem" AND %s'
+                    % (svc, ts_clause)
+                )
+                data = ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body={
+                    "resourceNames": resource_names, "filter": f_adk, "orderBy": "timestamp desc", "pageSize": 500,
+                }, timeout=8)
+                entries.extend(e for e in (data or {}).get("entries") or [] if isinstance(e, dict))
         else:
             pages = 0
             max_pages = 1 if is_live else 20
@@ -1105,7 +1176,8 @@ def _logging_data(ctx, conn, rng, out):
             agg[1] += tok or 0
         last = ts if last is None or ts > last else last
         if len(recent) < 20:
-            recent.append({"time": iso(ts), "user": str(user) if user is not None else None,
+            entry_proj = ((entry.get("resource") or {}).get("labels") or {}).get("project_id") or conn.get("project") or ctx.project
+            recent.append({"time": iso(ts), "project": str(entry_proj), "user": str(user) if user is not None else None,
                            "operation": str(op) if op is not None else None,
                            "model": str(model) if model is not None else None, "tokens": tok,
                            "status": str(status) if status is not None else None,
@@ -1192,29 +1264,22 @@ def _value_names(ctx, conn, out):
     return {"operation": found} if found else None
 
 
-def connector_data(ctx):
-    rng = ctx.range
-    conn_id = ctx.params.get("id") or ""
+def _compute_connector_data(ctx, conn_id, rng):
     conn = next((c for c in all_connectors(ctx) if c.get("id") == conn_id), None)
     if conn is None:
         raise ApiError("not_found", "Connector not found.")
     item = copy.deepcopy(conn)
-    item.setdefault("bigquery", None)
-    item.setdefault("logging", None)
-    flt = ((item.get("logging") or {}).get("filter") or "").strip()
-    m = AGENT_STREAM_RE.match(flt)
-    if m:
-        item["mapping"] = _agent_stream_mapping(item.get("mapping"))
+    svc = _enrich_connector_meta(ctx, item)
     item["health"] = "ok"
     item["lastEvent"] = None
-    item["catalog"] = _agent_stream_card(m.group(1)) if m else catalog.for_connector(item)
+    item["catalog"] = _agent_stream_card(svc) if svc else catalog.for_connector(item)
     out = _empty_data(item, rng)
     if not conn.get("enabled", True):
         ctx.warn("connector:%s" % conn_id, "disabled", "This connector is disabled.")
         return out
     try:
         if conn.get("source") == "bigquery":
-            _bq_data(ctx, conn, rng, out)
+            _bq_data(ctx, item, rng, out)
         else:
             _logging_data(ctx, item, rng, out)
     except GcpError as err:
@@ -1224,3 +1289,21 @@ def connector_data(ctx):
     item["lastEvent"] = (out.get("kpis") or {}).get("lastEvent")
     out["valueNames"] = _value_names(ctx, item, out)
     return out
+
+
+def connector_data(ctx):
+    rng = ctx.range
+    conn_id = ctx.params.get("id") or ""
+    if type(getattr(ctx, "gcp", None)).__name__ == "Gcp" and getattr(ctx, "app", None):
+        key = (
+            "telemetry_connector_data",
+            conn_id,
+            str(rng.start),
+            str(rng.end),
+            rng.granularity,
+            ctx.project,
+            getattr(ctx, "version", 0),
+        )
+        val, _ = ctx.app.cache.get_or_compute(key, HEALTH_TTL, lambda: _compute_connector_data(ctx, conn_id, rng))
+        return copy.deepcopy(val)
+    return _compute_connector_data(ctx, conn_id, rng)

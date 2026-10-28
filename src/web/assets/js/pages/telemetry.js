@@ -399,18 +399,23 @@ function notListedCard(ctx, env) {
 }
 
 function connectorCard(ctx, c) {
+  const wsProj = ((store.boot && store.boot.workspace) || {}).projectId || '';
+  const projId = c.project || wsProj;
   const stats = h('div', { class: 'connector-stats' },
     h('div', null, h('div', { class: 'cs-label' }, t('Events')), h('div', { class: 'cs-value' }, '\u2026')),
     h('div', null, h('div', { class: 'cs-label' }, t('Users')), h('div', { class: 'cs-value' }, '\u2026')),
     h('div', null, h('div', { class: 'cs-label' }, t('Tokens')), h('div', { class: 'cs-value' }, '\u2026')));
   const sparkHost = h('div');
   sparkHost.style.setProperty('height', '30px');
+  const metaRow = h('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap', marginBottom: '6px' } },
+    projId ? badge(t('Project: {id}', { id: projId }), 'info', { size: 'sm', dot: true }) : null,
+    c.bigquerySink ? badge(t('BigQuery linked: {dest}', { dest: c.bigquerySink }), 'success', { size: 'sm', dot: true }) : null);
   const el = card({
     cls: 'connector-card',
     title: c.name,
     subtitle: c.catalog ? cardWhat(c.catalog) : t('Custom connector set up by an administrator.'),
     actions: c.enabled ? badge(t('Enabled'), 'success', { size: 'sm', dot: true }) : badge(t('Disabled'), 'neutral', { size: 'sm' }),
-    body: h('div', null, h('code', { class: 'src-code' }, `${c.source === 'bigquery' ? 'BigQuery' : 'Cloud Logging'} \u00b7 ${sourceRef(c)}`), stats, sparkHost),
+    body: h('div', null, metaRow, h('code', { class: 'src-code' }, `${c.source === 'bigquery' ? 'BigQuery' : 'Cloud Logging'} \u00b7 ${sourceRef(c)}`), stats, sparkHost),
     footer: h('span', null, c.lastEvent ? t('Last event {time}', { time: fmt.relative(c.lastEvent) }) : t('No events yet')),
     source: c.health === 'error' ? t('Source error') : null,
   });
@@ -500,6 +505,8 @@ async function renderConnector(ctx, id) {
   const opNames = (d.valueNames && d.valueNames.operation) || {};
   const opLabelOf = (v) => (v && opNames[v] ? `${opNames[v]} \u00b7 ${shortValue(v)}` : shortValue(v));
   const statusOf = (v) => statusText(v, statusKey);
+  const wsProj = ((store.boot && store.boot.workspace) || {}).projectId || '';
+  const connProj = c.project || wsProj;
   const toggle = switchInput({
     checked: c.enabled, label: t('Enabled'),
     onChange: async (v, input) => {
@@ -516,6 +523,9 @@ async function renderConnector(ctx, id) {
   mount(headerSlot, pageHeader({
     title: c.name || id,
     desc: cat ? cardWhat(cat) : t('Custom connector set up by an administrator.'),
+    project: connProj,
+    projectScope: c.projectScope || 'single',
+    bigquerySink: c.bigquerySink || null,
     actions: [
       backButton(ctx),
       h('label', { class: 'row' }, h('span', { class: 'muted' }, t('Enabled')), toggle),
@@ -526,6 +536,8 @@ async function renderConnector(ctx, id) {
   }));
   mount(body);
   body.append(h('div', { class: 'tx-source' },
+    connProj ? badge(t('Data project: {id} (Single project)', { id: connProj }), 'info', { size: 'sm', dot: true }) : null,
+    c.bigquerySink ? badge(t('BigQuery sink: {dest}', { dest: c.sinkName ? `${c.bigquerySink} (${c.sinkName})` : c.bigquerySink }), 'success', { size: 'sm', dot: true }) : null,
     badge(c.source === 'bigquery' ? 'BigQuery' : 'Cloud Logging', 'neutral', { size: 'sm' }),
     h('code', { class: 'src-code' }, sourceRef(c))));
   const sample = d.sample || null;
@@ -535,7 +547,7 @@ async function renderConnector(ctx, id) {
   if (partial) {
     const logName = logNameOf(c);
     const connSource = {
-      kind: 'logging', id: c.id, project: null, card: cat, quick: c,
+      kind: 'logging', id: c.id, project: connProj, card: cat, quick: c,
       tech: sourceRef(c), logName, sinkFilter: c.logging && c.logging.filter,
     };
     body.append(banner({
@@ -604,7 +616,10 @@ async function renderConnector(ctx, id) {
   const recent = Array.isArray(d.recent) ? d.recent : null;
   const hasMessage = (recent || []).some((r) => r.message);
   const hasPayload = (recent || []).some((r) => r.payload);
-  const cols = [{ key: 'time', label: t('Time'), render: (r) => fmt.dateTime(r.time, true), value: (r) => r.time }];
+  const cols = [
+    { key: 'time', label: t('Time'), render: (r) => fmt.dateTime(r.time, true), value: (r) => r.time },
+    { key: 'project', label: t('Project'), render: (r) => badge(r.project || connProj || DASH, 'neutral', { size: 'sm', mono: true }), value: (r) => r.project || connProj || '' },
+  ];
   if (m.user) cols.push({ key: 'user', label: t('User'), render: (r) => h('span', { class: 'cell-wrap' }, r.user || DASH) });
   if (m.operation) {
     cols.push({
@@ -651,12 +666,9 @@ async function deleteConnector(ctx, c) {
 /* ------------------------------------------------------------------ custom setup (manual connector form) */
 
 async function openConnectorForm(ctx, existing, table, logFilter) {
-  let discovery = ctx.discovery;
-  if (!discovery) {
-    try { discovery = (await api.get('/api/v1/telemetry/discover')).data; } catch (e) { discovery = { tables: [], logs: [] }; }
-    ctx.discovery = discovery;
-  }
-  const tables = (discovery.tables || []).filter((tb) => !tb.core || (existing && existing.bigquery && existing.bigquery.table === tb.logical));
+  let discovery = ctx.discovery || { tables: [], logs: [] };
+  const getTables = () => (discovery.tables || []).filter((tb) => !tb.core || (existing && existing.bigquery && existing.bigquery.table === tb.logical));
+  let tables = getTables();
   const st = {
     id: existing ? existing.id : undefined,
     name: existing ? existing.name : (table ? prettyName(table.logical) : ''),
@@ -722,6 +734,14 @@ async function openConnectorForm(ctx, existing, table, logFilter) {
     footer: (el) => append(el, [button({ label: t('Cancel'), onClick: () => m.close() }), save]),
   });
   renderSource();
+  if (!ctx.discovery) {
+    api.get('/api/v1/telemetry/discover').then((res) => {
+      discovery = res.data || { tables: [], logs: [] };
+      ctx.discovery = discovery;
+      tables = getTables();
+      if (st.source === 'bigquery') renderSource();
+    }).catch(() => {});
+  }
   save.addEventListener('click', async () => {
     err.textContent = '';
     if (!st.name.trim()) { err.textContent = t('Enter a display name.'); return; }

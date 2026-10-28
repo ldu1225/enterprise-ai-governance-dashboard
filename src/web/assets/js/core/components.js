@@ -6,16 +6,36 @@ import { icon } from './icons.js';
 import { t } from './i18n.js';
 import { fmt, isNum, initials, DASH } from './format.js';
 import { isAbort } from './api.js';
-import { session, isAdmin } from './state.js';
+import { session, isAdmin, store } from './state.js';
 import { sparkline } from './charts.js';
 import { noticeText, serverText } from './messages.js';
 
 /* ------------------------------------------------------------------ layout */
 
-export function pageHeader({ title, desc, actions }) {
+export function pageHeader({ title, desc, actions, project, projectScope, bigquerySink }) {
+  const ws = (store && store.boot && store.boot.workspace) || {};
+  const projects = (Array.isArray(ws.projects) && ws.projects.length ? ws.projects : [ws.projectId]).filter(Boolean);
+  const sel = store ? store.selectedProject : null;
+  const scopeBadges = [];
+  if (project) {
+    scopeBadges.push(badge(t('Data project: {id} (Single project)', { id: project }), 'info', { size: 'sm', dot: true }));
+    if (!sel && projects.length > 1) {
+      scopeBadges.push(badge(t('Current view: All {n} projects integrated (this resource belongs to {id})', { n: projects.length, id: project }), 'neutral', { size: 'sm' }));
+    }
+    if (bigquerySink) {
+      scopeBadges.push(badge(t('BigQuery linked: {dest}', { dest: bigquerySink }), 'success', { size: 'sm', dot: true }));
+    }
+  } else if (sel) {
+    scopeBadges.push(badge(t('Scope: Single project ({id})', { id: sel }), 'info', { size: 'sm', dot: true }));
+  } else if (projects.length > 1) {
+    const preview = projects.slice(0, 2).join(', ') + (projects.length > 2 ? ` +${projects.length - 2}` : '');
+    scopeBadges.push(badge(t('Scope: All {n} connected projects integrated ({list})', { n: projects.length, list: preview }), 'success', { size: 'sm', dot: true }));
+  }
   return h('div', { class: 'page-header' },
     h('div', { class: 'page-heading' },
-      h('h1', { class: 'page-title' }, title),
+      h('div', { class: 'row', style: { gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+        h('h1', { class: 'page-title' }, title),
+        scopeBadges.length ? h('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap' } }, scopeBadges) : null),
       desc ? h('p', { class: 'page-desc' }, desc) : null),
     actions ? h('div', { class: 'page-actions' }, actions) : null);
 }
