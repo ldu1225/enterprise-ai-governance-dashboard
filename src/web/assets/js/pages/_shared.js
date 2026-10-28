@@ -269,7 +269,7 @@ function renderUserDetail(drawer, d, meta, onChanged) {
       columns: [
         { key: 'time', label: t('Time'), render: (r) => fmt.dateTime(r.time), value: (r) => r.time },
         { key: 'fileName', label: t('File'), render: (r) => (r.restricted ? h('span', { class: 'muted' }, t('Restricted')) : (r.fileName ? h('span', { class: 'truncate cell-main', title: r.fileName }, r.fileName) : (r.fileId ? h('span', { class: 'cell-mono text-muted', title: r.fileId }, `file_${r.fileId}`) : h('span', { class: 'text-muted' }, t('Name not recorded'))))) },
-        { key: 'mimeType', label: t('Type'), render: (r) => h('span', { class: 'cell-mono' }, r.mimeType || DASH) },
+        { key: 'mimeType', label: t('Type'), render: (r) => h('span', { class: 'cell-mono truncate', title: r.mimeType || '' }, r.mimeType || DASH) },
       ],
       rows: d.files, searchable: false, pageSize: 6,
     }) }));
