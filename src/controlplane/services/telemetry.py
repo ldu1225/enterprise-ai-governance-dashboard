@@ -829,7 +829,7 @@ def _get_path(obj, path):
     elif path == "jsonPayload.codemender_cost.session_id":
         payload = obj.get("jsonPayload") if isinstance(obj.get("jsonPayload"), dict) else {}
         cc = payload.get("codemender_cost") if isinstance(payload.get("codemender_cost"), dict) else {}
-        val = cc.get("session_id") or cc.get("run_id") or ((obj.get("resource") or {}).get("labels") or {}).get("task_id")
+        val = cc.get("session_id") or cc.get("run_id")
         return val if val else None
     cur = obj
     for seg in path.split("."):
@@ -1014,9 +1014,10 @@ def _logging_data(ctx, conn, rng, out):
             )
             f_run = (
                 'resource.type="cloud_run_revision" AND resource.labels.service_name="%s" '
-                'AND severity>="INFO" AND NOT logName:"varlog%%2Fsystem" '
-                'AND NOT (logName:"run.googleapis.com%%2Frequests" AND httpRequest.status=403) AND %s'
-                % (svc, ts_clause)
+                'AND (jsonPayload.event_type="CODEMENDER_COST_TELEMETRY" '
+                'OR (logName="projects/%s/logs/run.googleapis.com%%2Frequests" AND httpRequest.status!=403) '
+                'OR (logName="projects/%s/logs/run.googleapis.com%%2Fstdout" AND severity>="INFO")) AND %s'
+                % (svc, proj, proj, ts_clause)
             )
             res = ctx.run({
                 "genai": lambda: ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body={
@@ -1119,10 +1120,15 @@ def _logging_data(ctx, conn, rng, out):
     out["kpis"] = {"events": {"value": cur_events, "previous": None if truncated else prev_events},
                    "users": len(users) if mapping.get("user") else None,
                    "tokens": tokens_total if mapping.get("tokens") else None, "lastEvent": iso(last)}
-    ev_values = timeutil.fold(rng, ev_pairs, int)
-    tok_values = timeutil.fold(rng, tok_pairs, int) if mapping.get("tokens") else None
+    trend_rng = rng
+    if include_30d and ev_pairs:
+        min_day = min(d for d, _ in ev_pairs)
+        if min_day < rng.start:
+            trend_rng = timeutil.DateRange(min(min_day, rng.end - dt.timedelta(days=29)), rng.end, rng.grain, rng.tz_name)
+    ev_values = timeutil.fold(trend_rng, ev_pairs, int)
+    tok_values = timeutil.fold(trend_rng, tok_pairs, int) if mapping.get("tokens") else None
     if partial:
-        cut = rng.bucket_index(oldest)
+        cut = trend_rng.bucket_index(oldest)
         for i in range((cut if cut is not None else -1) + 1):
             ev_values[i] = None
             if tok_values is not None:
@@ -1130,7 +1136,7 @@ def _logging_data(ctx, conn, rng, out):
     series = [timeutil.series("events", "Events", ev_values)]
     if tok_values is not None:
         series.append(timeutil.series("tokens", "Tokens", tok_values))
-    out["trend"] = timeutil.timeline(rng, series)
+    out["trend"] = timeutil.timeline(trend_rng, series)
     out["topOperations"] = ([{"operation": k, "events": v} for k, v in sorted(ops.items(), key=lambda kv: -kv[1])[:10]]
                             if mapping.get("operation") else None)
     out["topStatuses"] = ([{"status": k, "events": v} for k, v in sorted(statuses.items(), key=lambda kv: -kv[1])[:10]]
