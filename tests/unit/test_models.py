@@ -407,8 +407,7 @@ class GeminiEnterpriseUploadFallbackTest(unittest.TestCase):
         self.assertEqual(out["total"], 2)
         self.assertEqual([i["fileId"] for i in out["items"]], ["f-1", "f-2"])
         self.assertTrue(all(i["fileName"] is None and i["category"] == "other" for i in out["items"]))
-        self.assertEqual([(w["code"], w["message"]) for w in ctx.warnings],
-                         [("partial_data", ge.ACTIVITY_UPLOAD_NOTE)])
+        self.assertEqual(ctx.warnings, [])
 
     def test_activity_only_workspace(self):
         ge = self._ge()

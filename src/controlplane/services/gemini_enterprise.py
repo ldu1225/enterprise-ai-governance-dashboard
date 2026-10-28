@@ -10,7 +10,7 @@ from .. import timeutil
 from ..gcp import GcpError
 from ..schema import expr, quote_ident
 from ..security import uid_for
-from .base import (GE_ACTIVITY, GE_MESSAGE, bucket_or_sentinel, bucket_sql, bucket_values, discovery_host,
+from .base import (GE_ACTIVITY, GE_INFERENCE, GE_MESSAGE, bucket_or_sentinel, bucket_sql, bucket_values, discovery_host,
                    discovery_locations, human_sql, iso, num, parse_rfc3339, period_sql, range_params, split_rollup,
                    to_int)
 
@@ -528,12 +528,72 @@ def file_items_sql(msrc, asrc, email_filter=False, limit=200):
     return sql
 
 
-def activity_upload_sql(asrc, email_filter=False, limit=200):
-    """Upload events from the activity log: who and when. File names are not recorded in that log."""
+_EXT_MIMES = {
+    ".pdf": "application/pdf",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".csv": "text/csv",
+    ".tsv": "text/tab-separated-values",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".json": "application/json",
+}
+
+
+def _inf_msgs_json(isrc, alias="i"):
+    if isrc is None or isrc.schema is None:
+        return None
+    jp = isrc.schema.node("jsonPayload")
+    msgs = isrc.schema.node("jsonPayload.gen_ai_input_messages")
+    if jp is None or msgs is None:
+        return None
+    return "TO_JSON_STRING(%s.%s.%s)" % (alias, quote_ident(jp.name), quote_ident(msgs.name))
+
+
+def activity_upload_sql(asrc, email_filter=False, limit=200, isrc=None):
+    """Upload events from the activity log, enriched with filenames from gen_ai_client_inference_operation_details when present."""
     ctes, caps = act_ctes(asrc, start_param="start_ts")
     if not caps["upload"]:
         return None
     where = "is_upload AND email = @email" if email_filter else "is_upload"
+    msgs_json = _inf_msgs_json(isrc) if (isrc and caps.get("trace") and caps.get("user")) else None
+    if msgs_json:
+        i_ts = "i.%s" % quote_ident(isrc.time_column())
+        i_trace = expr("i", isrc.schema, "trace", cast="STRING")
+        i_user = expr("i", isrc.schema, "jsonPayload.user_id", "jsonPayload.user", cast="STRING")
+        user_sql = "COALESCE(au.a_email, LOWER(%s))" % i_user if i_user else "au.a_email"
+        join_au = ("LEFT JOIN act_users au ON au.trace = %s" % i_trace) if i_trace else ""
+        ctes.append("act_users AS (SELECT trace, ANY_VALUE(email) AS a_email FROM act "
+                    "WHERE trace IS NOT NULL AND email IS NOT NULL GROUP BY trace)")
+        ctes.append(isrc.cte("i_src", start="start_ts"))
+        ctes.append(
+            "inf_files AS (SELECT %s AS ts, %s AS email, "
+            "TRIM(COALESCE(REGEXP_EXTRACT(%s, r'original_filename:\\s*([^,>\"\\\\]+)'), "
+            "REGEXP_EXTRACT(%s, r'<start_of_user_uploaded_file:\\s*([^,>\"\\\\]+)'))) AS file_name, "
+            "REGEXP_EXTRACT(%s, r'mime type:\\s*([A-Za-z0-9_./+-]+)') AS mime "
+            "FROM i_src i %s WHERE %s LIKE %s)"
+            % (i_ts, user_sql, msgs_json, msgs_json, msgs_json, join_au, msgs_json, UPLOAD_LIKE)
+        )
+        ctes.append(
+            "act_up AS (SELECT u.ts, u.email, f.file_name, f.mime, u.file_id "
+            "FROM (SELECT * FROM act WHERE %s) u "
+            "LEFT JOIN inf_files f ON f.email = u.email AND f.file_name IS NOT NULL "
+            "AND f.ts BETWEEN TIMESTAMP_SUB(u.ts, INTERVAL 1 MINUTE) AND TIMESTAMP_ADD(u.ts, INTERVAL 30 MINUTE) "
+            "QUALIFY ROW_NUMBER() OVER (PARTITION BY u.file_id, u.ts "
+            "ORDER BY ABS(TIMESTAMP_DIFF(f.ts, u.ts, SECOND)) ASC NULLS LAST) = 1)" % where
+        )
+        return ("WITH %s\nSELECT ts, email, file_name, mime, file_id, COUNT(*) OVER () AS total FROM act_up\n"
+                "ORDER BY ts DESC\nLIMIT %d" % (",\n".join(ctes), int(limit)))
     return ("WITH %s\nSELECT ts, email, CAST(NULL AS STRING) AS file_name, CAST(NULL AS STRING) AS mime, file_id, "
             "COUNT(*) OVER () AS total FROM act WHERE %s\nORDER BY ts DESC\nLIMIT %d"
             % (",\n".join(ctes), where, int(limit)))
@@ -549,6 +609,10 @@ def file_rows_to_items(rows):
         email = row.get("email")
         name = row.get("file_name")
         mime = row.get("mime")
+        if name and "." in name:
+            ext = "." + name.rsplit(".", 1)[-1].lower()
+            if not mime or (ext in (".xlsx", ".xls") and mime == "text/csv"):
+                mime = _EXT_MIMES.get(ext, mime)
         category = file_category(name, mime)
         items.append({"time": iso(row.get("ts")), "uid": uid_for(email) if email else None, "email": email,
                       "fileName": name, "fileId": row.get("file_id"), "mimeType": mime, "category": category,
@@ -560,6 +624,7 @@ def file_rows_to_items(rows):
 def file_uploads(ctx):
     rng = ctx.range
     msrc, asrc = ge_sources(ctx)
+    isrc = ctx.audit_source(GE_INFERENCE, optional=True)
     params = range_params(rng, with_prev=False)
     rows = None
     if msrc:
@@ -574,8 +639,8 @@ def file_uploads(ctx):
             except GcpError as err:
                 ctx.warn_error(msrc.label, err, "Gemini Enterprise file uploads")
     if not rows and asrc:
-        # The message log is optional: fall back to upload calls in the activity log.
-        a_sql = activity_upload_sql(asrc)
+        # The message log is optional: fall back to upload calls in the activity log (enriched with inference details).
+        a_sql = activity_upload_sql(asrc, isrc=isrc)
         if a_sql:
             try:
                 a_rows = ctx.query(a_sql, params, "gemini_enterprise")
@@ -583,8 +648,9 @@ def file_uploads(ctx):
                 ctx.warn_error(asrc.label, err, "Gemini Enterprise activity logs")
             else:
                 ctx.add_source(asrc.label)
+                if isrc:
+                    ctx.add_source(isrc.label)
                 if a_rows:
-                    ctx.warn(asrc.label, "partial_data", ACTIVITY_UPLOAD_NOTE)
                     rows = a_rows
                 elif rows is None:
                     rows = []

@@ -17,6 +17,7 @@ LOG = logging.getLogger("controlplane.services")
 AUDIT_ACTIVITY = "cloudaudit_googleapis_com_activity"
 AUDIT_DATA_ACCESS = "cloudaudit_googleapis_com_data_access"
 GE_MESSAGE = "discoveryengine_googleapis_com_gen_ai_user_message"
+GE_INFERENCE = "discoveryengine_googleapis_com_gen_ai_client_inference_operation_details"
 GE_ACTIVITY = "discoveryengine_googleapis_com_gemini_enterprise_user_activity"
 ARMOR_OPS = "modelarmor_googleapis_com_sanitize_operations"
 AGY_SINK = "businessaicode_googleapis_com_inference_response"
