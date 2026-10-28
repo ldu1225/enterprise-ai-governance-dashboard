@@ -43,8 +43,9 @@ def _route(method, path, fn, **opts):
 # System
 _route("GET", "/api/v1/bootstrap", system.bootstrap, handler=True, mask=False)
 _route("GET", "/api/v1/session", system.session, handler=True, mask=False)
-# Sign-in (Google) and account access
+# Sign-in (Google / ID-Password) and account access
 _route("GET", "/api/v1/auth/state", system.auth_state, handler=True, public=True, mask=False)
+_route("POST", "/api/v1/auth/login", system.password_login, handler=True, public=True, rate="login", mask=False)
 _route("POST", "/api/v1/auth/logout", system.logout, handler=True, mask=False)
 _route("GET", "/api/v1/access", access.summary, admin_read=True, mask=False)
 _route("POST", "/api/v1/access/users", access.save_user, admin=True, mask=False)

@@ -73,8 +73,10 @@ def auth_state(ctx, handler):
     if mode == "google" and sign_in is not None:
         claims = sign_in.user_from_headers(handler.headers, s)
         if claims:
+            role = "admin" if (claims["email"] == "admin" or claims.get("role") == "admin" or
+                               is_admin_email(claims["email"], s["security"].get("admins"))) else "viewer"
             user = {"email": claims["email"], "name": claims.get("name") or "", "picture": claims.get("picture") or "",
-                    "role": "admin" if is_admin_email(claims["email"], s["security"].get("admins")) else "viewer"}
+                    "role": role}
         else:
             denied = sign_in.denied_email(handler.headers)
     data = {
@@ -84,6 +86,9 @@ def auth_state(ctx, handler):
                      "defaultTheme": s["branding"]["default_theme"]},
         "authMode": mode,
         "googleEnabled": bool(mode == "google" and sign_in is not None),
+        "passwordEnabled": bool(mode == "google" and sign_in is not None),
+        "defaultAdminPassword": bool(mode == "google" and sign_in is not None and
+                                     sign_in.default_admin_password_active()),
         "guestAccess": bool(mode == "google" and s["security"].get("guest_access")),
         "switchAccountUrl": sign_in.switch_account_url() if mode == "google" and sign_in is not None else None,
         "user": user,
@@ -91,6 +96,22 @@ def auth_state(ctx, handler):
         "csrfToken": token,
     }
     return data, [("Set-Cookie", cookie)]
+
+
+def password_login(ctx, handler):
+    """POST /api/v1/auth/login (public): sign in with an account ID/email and password."""
+    s = ctx.settings
+    app = ctx.app
+    mode = resolve_auth_mode(s["security"]["auth_mode"], app.environ)
+    sign_in = getattr(app, "auth", None)
+    if mode != "google" or sign_in is None:
+        raise ApiError("bad_request", "Password sign-in is not enabled on this deployment.")
+    body = ctx.body or {}
+    username = body.get("username") if "username" in body else body.get("email")
+    password = body.get("password")
+    next_path = body.get("next") or "/"
+    user, redirect_to, cookies = sign_in.password_login(username, password, next_path, handler.headers, s)
+    return {"user": user, "redirect": redirect_to}, [("Set-Cookie", c) for c in cookies]
 
 
 def logout(ctx, handler):
