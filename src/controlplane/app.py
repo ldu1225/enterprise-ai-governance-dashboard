@@ -108,6 +108,7 @@ _route("GET", "/api/v1/telemetry/discover", telemetry.discover, module="telemetr
 _route("GET", "/api/v1/telemetry/connectors", telemetry.list_connectors, module="telemetry", cache=True, ttl=60)
 _route("POST", "/api/v1/telemetry/connectors", telemetry.save_connector, module="telemetry", admin=True)
 _route("POST", "/api/v1/telemetry/connectors/delete", telemetry.delete_connector, module="telemetry", admin=True)
+_route("POST", "/api/v1/telemetry/sinks", telemetry.create_sink, module="telemetry", admin=True)
 _route("GET", "/api/v1/telemetry/connectors/data", telemetry.connector_data, module="telemetry", range=True,
        cache=True, mask={"nulls": ("payload", "message")})
 # Results can contain free text that the dashboards withhold from viewers: administrators always, viewers

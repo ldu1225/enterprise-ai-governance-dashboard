@@ -250,6 +250,116 @@ def _task_result(ctx, result, source, what):
     return None
 
 
+def _logging_resource_names(ctx, flt):
+    """Returns projects/<id> resourceNames for Cloud Logging queries across connected projects."""
+    all_projs = getattr(ctx, "projects", None) or [ctx.project]
+    m = re.findall(r"projects/([a-z][a-z0-9\-]{4,29})/logs/", flt or "")
+    projs = [p for p in dict.fromkeys(m) if p in all_projs]
+    if projs:
+        return ["projects/%s" % p for p in projs]
+    return ["projects/%s" % p for p in all_projs]
+
+
+def _discover_agent_streams(ctx):
+    """Discovers per-agent OpenTelemetry / ADK Cloud Run telemetry streams."""
+    if type(getattr(ctx, "gcp", None)).__name__ != "Gcp":
+        return [], {}
+    tz = timeutil.get_zone(ctx.tz_name)
+    now = dt.datetime.now(dt.timezone.utc)
+    today = now.astimezone(tz).date()
+    index = {today - dt.timedelta(days=ACTIVITY_DAYS - 1 - i): i for i in range(ACTIVITY_DAYS)}
+    since = iso(now - dt.timedelta(days=60))
+    body = {
+        "resourceNames": ["projects/%s" % p for p in ctx.projects],
+        "filter": '(logName:"gen_ai.user.message" OR logName:"gen_ai.choice" OR labels."created-by"="adk") AND timestamp>="%s"' % since,
+        "orderBy": "timestamp desc",
+        "pageSize": 250,
+    }
+    try:
+        data = ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body=body, timeout=15)
+    except Exception:  # pylint: disable=broad-except
+        return [], {}
+    found = {}
+    short_counts = {}
+    for entry in (data or {}).get("entries") or []:
+        if not isinstance(entry, dict):
+            continue
+        ln = entry.get("logName") or ""
+        if "/logs/" in ln:
+            sh = urllib.parse.unquote(ln.split("/logs/", 1)[1])
+            short_counts[sh] = short_counts.get(sh, 0) + 1
+        rl = ((entry.get("resource") or {}).get("labels")) or {}
+        svc = (rl.get("job") or rl.get("service_name") or "").strip()
+        proj = (rl.get("project_id") or ctx.project or "").strip()
+        if not svc or not re.match(r"^[A-Za-z0-9_\-]{2,64}$", svc):
+            continue
+        if svc.startswith("ai-control-plane"):
+            continue
+        key = (proj, svc)
+        item = found.get(key)
+        if item is None:
+            item = {"project": proj, "service": svc, "entries30d": 0, "daily": [0] * ACTIVITY_DAYS}
+            found[key] = item
+        item["entries30d"] += 1
+        ts = parse_rfc3339(entry.get("timestamp"))
+        if ts is not None:
+            day = ts.astimezone(tz).date()
+            pos = index.get(day)
+            if pos is not None:
+                item["daily"][pos] += 1
+    out = []
+    for (proj, svc), info in sorted(found.items()):
+        sid = "agent_stream_%s" % catalog.sanitize_log_name(svc)
+        pretty = ("CodeMender (%s)" % svc) if "codemender" in svc.lower() else svc
+        flt = 'resource.labels.job="%s" OR resource.labels.service_name="%s"' % (svc, svc)
+        card = {
+            "id": sid,
+            "known": True,
+            "title": "{agent} Agent Telemetry",
+            "titleParams": {"agent": pretty},
+            "what": "OpenTelemetry prompts, model responses (gen_ai.user.message, gen_ai.choice) and Cloud Run execution logs emitted by {agent}.",
+            "whatParams": {"agent": pretty},
+            "category": catalog.AI,
+            "sensitive": True,
+            "operationLabel": "Log / Event",
+            "statusLabel": "Severity",
+            "tokensLabel": None,
+            "builtIn": [],
+        }
+        quick = {
+            "name": ("%s Agent Telemetry" % pretty)[:80],
+            "enabled": True,
+            "source": "logging",
+            "bigquery": None,
+            "logging": {"filter": flt},
+            "mapping": {
+                "time": "timestamp",
+                "operation": "logName",
+                "status": "severity",
+                "user": None,
+                "model": None,
+                "tokens": None,
+            },
+        }
+        entries_recent = sum(info["daily"]) or info["entries30d"]
+        out.append({
+            "id": sid,
+            "logName": "projects/%s/logs/%s" % (proj, svc),
+            "shortName": "%s (gen_ai.user.message · gen_ai.choice · Cloud Run)" % svc,
+            "sinkFilter": flt,
+            "project": proj,
+            "routedToBigQuery": False,
+            "core": False,
+            "registered": False,
+            "connectorId": None,
+            "entries7d": entries_recent,
+            "daily": info["daily"],
+            "catalog": card,
+            "quickAdd": quick,
+        })
+    return out, short_counts
+
+
 def discover(ctx):
     """Every telemetry source of the project, described in plain language.
 
@@ -258,7 +368,7 @@ def discover(ctx):
     POST /api/v1/telemetry/connectors, null when the source cannot be added) and `connectorId` (the connector
     that already reads it). entries7d/daily are the entries written per day over the last 7 days according to
     Cloud Monitoring; they are null when that metric could not be read."""
-    by_table, by_log = {}, {}
+    by_table, by_log, by_filter = {}, {}, {}
     for conn in all_connectors(ctx):
         bq = conn.get("bigquery") or {}
         if conn.get("source") == "bigquery" and bq.get("table"):
@@ -268,11 +378,19 @@ def discover(ctx):
             sid = catalog.connector_source_id(conn)
             if sid:
                 by_log.setdefault(sid, conn.get("id"))
-    res = ctx.run_composite({"tables": lambda: _discover_tables(ctx, by_table), "logs": lambda: _list_logs(ctx),
-                             "activity": lambda: _log_activity(ctx)})
+            flt = ((conn.get("logging") or {}).get("filter") or "").strip()
+            if flt:
+                by_filter.setdefault(flt, conn.get("id"))
+    res = ctx.run_composite({
+        "tables": lambda: _discover_tables(ctx, by_table),
+        "logs": lambda: _list_logs(ctx),
+        "activity": lambda: _log_activity(ctx),
+        "agents": lambda: _discover_agent_streams(ctx),
+    })
     tables = _task_result(ctx, res["tables"], "telemetry:tables", "Table discovery")
     logs = _task_result(ctx, res["logs"], "api:logging.logs", "The Cloud Logging log list")
     activity = _task_result(ctx, res["activity"], "api:monitoring.log_entry_count", "Log activity from Cloud Monitoring")
+    agent_streams, short_30d = res["agents"][1] if res.get("agents") and res["agents"][0] else ([], {})
     logical = {tb["id"] for tb in tables or []}
     builtin = _builtin_logs(ctx)
     by_id = {}
@@ -280,14 +398,24 @@ def discover(ctx):
         short = log["shortName"]
         sid = catalog.sanitize_log_name(short)
         counts = (activity.get(short) or [0] * ACTIVITY_DAYS) if activity is not None else None
+        entries7d = sum(counts) if counts is not None else None
+        if not entries7d and short in short_30d:
+            entries7d = short_30d[short]
         core = sid in CORE_TABLES or short in builtin
         card = catalog.describe(sid, short=short, built_in=builtin.get(short) if short in builtin else
                                 (None if core else []))
         log.update({"id": sid, "routedToBigQuery": sid in logical, "core": core,
                     "registered": sid in by_log, "connectorId": by_log.get(sid),
-                    "entries7d": sum(counts) if counts is not None else None, "daily": counts,
+                    "entries7d": entries7d, "daily": counts,
                     "catalog": card, "quickAdd": catalog.logging_connector(card, log["logName"])})
         by_id.setdefault(sid, log)
+    if logs is not None and agent_streams:
+        for stream in reversed(agent_streams):
+            flt = stream["quickAdd"]["logging"]["filter"]
+            conn_id = by_filter.get(flt)
+            stream["registered"] = conn_id is not None
+            stream["connectorId"] = conn_id
+            logs.insert(0, stream)
     for tb in tables or []:
         log = by_id.get(tb["id"])
         if log is not None:
@@ -315,7 +443,8 @@ def _connector_health(ctx, conn):
             return "ok", iso(rows[0].get("last")) if rows else None
         flt = (conn.get("logging") or {}).get("filter") or ""
         since = iso(dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30))
-        body = {"resourceNames": ["projects/%s" % ctx.project], "filter": "(%s) AND timestamp>=\"%s\"" % (flt, since),
+        body = {"resourceNames": _logging_resource_names(ctx, flt),
+                "filter": "(%s) AND timestamp>=\"%s\"" % (flt, since),
                 "orderBy": "timestamp desc", "pageSize": 1}
         data = ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body=body)
         entries = data.get("entries") or []
@@ -491,12 +620,144 @@ def delete_connector(ctx):
     return {"deleted": conn_id, "connectors": list_connectors(ctx)["connectors"]}
 
 
+def create_sink(ctx):
+    """One-click Cloud Logging -> BigQuery sink provisioning + dataset IAM grant + optional connector creation."""
+    body = ctx.body or {}
+    log_names = [str(n).strip() for n in (body.get("logNames") or []) if isinstance(n, str) and n.strip()]
+    raw_filter = (body.get("filter") or "").strip()
+    extra_filter = (body.get("extraFilter") or "").strip()
+    if not raw_filter:
+        parts = []
+        if len(log_names) == 1:
+            parts.append('logName="%s"' % log_names[0].replace("\\", "\\\\").replace('"', '\\"'))
+        elif len(log_names) > 1:
+            parts.append("(" + " OR ".join('logName="%s"' % n.replace("\\", "\\\\").replace('"', '\\"') for n in log_names) + ")")
+        if extra_filter:
+            parts.append("(%s)" % extra_filter if parts else extra_filter)
+        raw_filter = " AND ".join(parts)
+    if not raw_filter or len(raw_filter) > 4000 or re.search(r"[\x00-\x08\x0b-\x1f\x7f]", raw_filter):
+        raise ApiError("bad_request", "A valid Cloud Logging filter is required.")
+
+    extracted = re.findall(r"projects/([a-z][a-z0-9\-]{4,29})/logs/", raw_filter)
+    sink_project = (body.get("project") or (extracted[0] if extracted else "") or ctx.project or "").strip().lower()
+    if not config.valid_project(sink_project):
+        sink_project = ctx.project
+    dest_project = ctx.project
+    dataset = (body.get("dataset") or ctx.ws.get("analytics_dataset") or "ge_analytics").strip()
+    if not config.valid_dataset(dataset):
+        raise ApiError("bad_request", "Field 'dataset' must be a valid BigQuery dataset name.")
+
+    sink_name = (body.get("sinkName") or "").strip()
+    if not sink_name:
+        slug = re.sub(r"[^a-zA-Z0-9_]+", "_", (body.get("sourceId") or "telemetry")).strip("_").lower()
+        sink_name = ("cp_sink_%s" % (slug or "telemetry"))[:80]
+    if not re.match(r"^[A-Za-z0-9_\-]{1,100}$", sink_name):
+        raise ApiError("bad_request", "Field 'sinkName' must contain only letters, digits, underscores or hyphens.")
+
+    bq_base = "https://bigquery.googleapis.com/bigquery/v2"
+    try:
+        ctx.rest("GET", "%s/projects/%s/datasets/%s" % (bq_base, dest_project, dataset))
+    except GcpError as err:
+        if err.kind == "not_found":
+            ctx.rest("POST", "%s/projects/%s/datasets" % (bq_base, dest_project),
+                     json_body={"datasetReference": {"projectId": dest_project, "datasetId": dataset}})
+        else:
+            raise ApiError("upstream_error", "Could not verify BigQuery dataset '%s.%s'." % (dest_project, dataset))
+
+    destination = "bigquery.googleapis.com/projects/%s/datasets/%s" % (dest_project, dataset)
+    sink_payload = {
+        "name": sink_name,
+        "destination": destination,
+        "filter": raw_filter,
+        "bigqueryOptions": {"usePartitionedTables": True},
+    }
+    sink_url = "%s/projects/%s/sinks" % (LOGGING_V2, urllib.parse.quote(sink_project, safe=""))
+    try:
+        sink_resp = ctx.rest("POST", "%s?uniqueWriterIdentity=true" % sink_url, json_body=sink_payload)
+    except GcpError as err:
+        if err.status == 409 or err.kind == "conflict":
+            put_url = "%s/%s?uniqueWriterIdentity=true&updateMask=destination,filter,bigqueryOptions" % (
+                sink_url, urllib.parse.quote(sink_name, safe=""))
+            sink_resp = ctx.rest("PUT", put_url, json_body=sink_payload)
+        else:
+            LOG.warning("create_sink failed project=%s sink=%s kind=%s", sink_project, sink_name, err.kind)
+            raise ApiError("upstream_error", "Could not create or update Cloud Logging sink '%s'." % sink_name)
+
+    writer_identity = (sink_resp or {}).get("writerIdentity") or ""
+    iam_granted = False
+    if writer_identity.startswith("serviceAccount:"):
+        sa_email = writer_identity.split(":", 1)[1].strip()
+        try:
+            ds_meta = ctx.rest("GET", "%s/projects/%s/datasets/%s" % (bq_base, dest_project, dataset))
+            access = list((ds_meta or {}).get("access") or [])
+            already = any(
+                isinstance(a, dict) and a.get("userByEmail") == sa_email
+                and a.get("role") in ("WRITER", "OWNER", "roles/bigquery.dataEditor", "roles/bigquery.admin")
+                for a in access
+            )
+            if not already:
+                access.append({"role": "WRITER", "userByEmail": sa_email})
+                ctx.rest("PATCH", "%s/projects/%s/datasets/%s" % (bq_base, dest_project, dataset),
+                         json_body={"access": access})
+            iam_granted = True
+        except GcpError as err:
+            LOG.warning("dataset IAM grant failed dataset=%s sa=%s kind=%s", dataset, sa_email, err.kind)
+
+    saved_conn = None
+    quick_add = body.get("quickAdd")
+    if body.get("createConnector", True) and isinstance(quick_add, dict):
+        try:
+            clean = validate_connector(ctx, quick_add)
+            flt_target = ((clean.get("logging") or {}).get("filter") or "").strip()
+            existing = next(
+                (c for c in all_connectors(ctx)
+                 if ((c.get("logging") or {}).get("filter") or "").strip() == flt_target
+                 or c.get("name") == clean.get("name")),
+                None,
+            )
+            if existing is not None:
+                saved_conn = existing
+            else:
+                actor = ctx.identity.email
+
+                def mutate(connectors):
+                    created = dict(clean, id="conn_%s" % secrets.token_hex(4), createdAt=now_iso(), createdBy=actor)
+                    connectors.append(created)
+                    return created
+
+                saved_conn = ctx.app.settings.save_connectors(mutate, actor)
+                ctx.app.on_settings_changed()
+                settings, version = ctx.app.settings.snapshot()
+                ctx.settings, ctx.version = settings, version
+        except ApiError:
+            pass
+
+    ctx.app.cache.clear()
+    return {
+        "sink": {
+            "name": (sink_resp or {}).get("name") or sink_name,
+            "project": sink_project,
+            "destination": destination,
+            "dataset": dataset,
+            "filter": raw_filter,
+            "writerIdentity": writer_identity,
+            "iamGranted": iam_granted,
+        },
+        "connector": with_health(ctx, saved_conn) if saved_conn else None,
+        "connectors": list_connectors(ctx)["connectors"],
+    }
+
+
 # ---------------------------------------------------------------------------
 # GET /api/v1/telemetry/connectors/data
 # ---------------------------------------------------------------------------
 
 def _get_path(obj, path):
     """Resolves a dotted path (with optional [n] indexes) on a LogEntry; returns scalars only."""
+    if path == "logName" and isinstance(obj, dict):
+        ln = obj.get("logName")
+        if isinstance(ln, str) and "/logs/" in ln:
+            return urllib.parse.unquote(ln.split("/logs/", 1)[1])
     cur = obj
     for seg in path.split("."):
         m = SEGMENT_RE.match(seg)
@@ -522,10 +783,22 @@ def _log_message(entry):
     if not isinstance(text, str):
         payload = entry.get("jsonPayload") if isinstance(entry.get("jsonPayload"), dict) else {}
         text = next((payload[k] for k in ("message", "msg", "error") if isinstance(payload.get(k), str)), None)
+        if not isinstance(text, str):
+            content = payload.get("content") if isinstance(payload.get("content"), dict) else {}
+            parts = content.get("parts") if isinstance(content.get("parts"), list) else []
+            for part in parts:
+                if isinstance(part, dict) and isinstance(part.get("text"), str) and part["text"].strip():
+                    role = content.get("role") or ""
+                    text = ("%s: %s" % (role, part["text"].strip())) if role else part["text"].strip()
+                    break
     if not isinstance(text, str):
         proto = entry.get("protoPayload") if isinstance(entry.get("protoPayload"), dict) else {}
         status = proto.get("status") if isinstance(proto.get("status"), dict) else {}
         text = status.get("message") if isinstance(status.get("message"), str) else None
+    if not isinstance(text, str):
+        req = entry.get("httpRequest") if isinstance(entry.get("httpRequest"), dict) else {}
+        if req.get("requestMethod") or req.get("requestUrl"):
+            text = "%s %s (%s)" % (req.get("requestMethod") or "HTTP", req.get("requestUrl") or "", req.get("status") or "-")
     text = text.strip() if isinstance(text, str) else ""
     return text[:MESSAGE_CHARS] or None
 
@@ -630,13 +903,16 @@ def _logging_data(ctx, conn, rng, out):
     mapping = conn.get("mapping") or {}
     prev = rng.previous()
     label = "logging:%s" % conn.get("name")
-    body_filter = '(%s) AND timestamp>="%s" AND timestamp<"%s"' % (flt, iso(prev.start_ts()), iso(rng.end_ts()))
+    is_live = type(getattr(ctx, "gcp", None)).__name__ == "Gcp"
+    query_start = min(prev.start_ts(), rng.end_ts() - dt.timedelta(days=30)) if is_live else prev.start_ts()
+    body_filter = '(%s) AND timestamp>="%s" AND timestamp<"%s"' % (flt, iso(query_start), iso(rng.end_ts()))
     entries = []
     token = None
     truncated = False
+    resource_names = _logging_resource_names(ctx, flt)
     try:
         while True:
-            body = {"resourceNames": ["projects/%s" % ctx.project], "filter": body_filter,
+            body = {"resourceNames": resource_names, "filter": body_filter,
                     "orderBy": "timestamp desc", "pageSize": min(1000, MAX_LOG_ENTRIES - len(entries))}
             if token:
                 body["pageToken"] = token
@@ -663,6 +939,11 @@ def _logging_data(ctx, conn, rng, out):
     ev_pairs, tok_pairs = [], []
     ops, statuses, top_users, models = {}, {}, {}, {}
     recent = []
+    has_in_window = any(
+        (parse_rfc3339(_get_path(e, time_path) if time_path != "timestamp" else e.get("timestamp")) or rng.start_ts()) >= rng.start_ts()
+        for e in entries
+    ) if is_live else True
+    include_30d = is_live and (not has_in_window or "resource.labels.job=" in flt or "gen_ai." in flt)
     for entry in entries:
         ts = parse_rfc3339(_get_path(entry, time_path) if time_path != "timestamp" else entry.get("timestamp"))
         if ts is None:
@@ -673,8 +954,9 @@ def _logging_data(ctx, conn, rng, out):
         tok = to_int(tok_raw) if tok_raw is not None else None
         op = _get_path(entry, mapping["operation"]) if mapping.get("operation") else None
         status = _get_path(entry, mapping["status"]) if mapping.get("status") else None
-        if ts < rng.start_ts():
-            prev_events += 1
+        if ts < rng.start_ts() and not include_30d:
+            if ts >= prev.start_ts():
+                prev_events += 1
             continue
         cur_events += 1
         day = ts.astimezone(tz).date()
