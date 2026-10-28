@@ -1124,7 +1124,9 @@ def _logging_data(ctx, conn, rng, out):
     if include_30d and ev_pairs:
         min_day = min(d for d, _ in ev_pairs)
         if min_day < rng.start:
-            trend_rng = timeutil.DateRange(min(min_day, rng.end - dt.timedelta(days=29)), rng.end, rng.grain, rng.tz_name)
+            trend_rng = timeutil.DateRange(
+                min(min_day, rng.end - dt.timedelta(days=29)), rng.end, rng.granularity, rng.tz_name
+            )
     ev_values = timeutil.fold(trend_rng, ev_pairs, int)
     tok_values = timeutil.fold(trend_rng, tok_pairs, int) if mapping.get("tokens") else None
     if partial:
