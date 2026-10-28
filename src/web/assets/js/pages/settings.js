@@ -548,7 +548,7 @@ export function accessMembers(ctx = {}, editable = true) {
   const formError = h('div', { class: 'field-error', role: 'alert' });
   const emailInput = textInput({
     value: '',
-    placeholder: 'lges-admin, viewer1, user@example.com, *@example.com',
+    placeholder: 'team-admin, viewer1, user@example.com, *@example.com',
     mono: true,
     attrs: { 'aria-label': t('Account ID, email or domain'), autocomplete: 'off', spellcheck: 'false', maxlength: 2000, disabled: !editable || null },
   });
@@ -567,7 +567,7 @@ export function accessMembers(ctx = {}, editable = true) {
       h('div', { class: 'access-add-password', style: 'min-width:220px;flex:1' }, passwordInput),
       roleSelect,
       addBtn),
-    h('span', { class: 'field-help' }, t('Enter an account ID (e.g. lges-admin, viewer1) with a password for direct ID/Password login, or enter a Google email / *@domain rule.')),
+    h('span', { class: 'field-help' }, t('Enter an account ID (e.g. team-admin, viewer1) with a password for direct ID/Password login, or enter a Google email / *@domain rule.')),
     formError);
   const c = card({
     title: t('Accounts & passwords'),

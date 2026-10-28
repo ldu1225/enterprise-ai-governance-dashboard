@@ -397,21 +397,21 @@ class GoogleSignInFlowTest(unittest.TestCase):
 
         # 3. Built-in admin can create custom ID/Password accounts (admin & viewer) and change admin password
         r1 = self.post("/api/v1/access/users", admin_sess,
-                       {"email": "lges-viewer", "role": "viewer", "password": "viewer-pass-123"})
+                       {"email": "team-viewer", "role": "viewer", "password": "viewer-pass-123"})
         self.assertEqual(r1.status, 200)
         r2 = self.post("/api/v1/access/users", admin_sess,
-                       {"email": "lges-admin", "role": "admin", "password": "admin-pass-456"})
+                       {"email": "team-admin", "role": "admin", "password": "admin-pass-456"})
         self.assertEqual(r2.status, 200)
 
-        # 4. Log in with lges-viewer and verify read-only viewer role
+        # 4. Log in with team-viewer and verify read-only viewer role
         v_login = self.request("POST", "/api/v1/auth/login",
                                cookies={"cp_csrf": csrf}, headers={"X-CSRF-Token": csrf},
-                               body={"username": "lges-viewer", "password": "viewer-pass-123"})
+                               body={"username": "team-viewer", "password": "viewer-pass-123"})
         self.assertEqual(v_login.status, 200)
         v_sess = v_login.cookies()["cp_session"][0]
         v_boot = self.request("GET", "/api/v1/bootstrap", cookies={"cp_session": v_sess}).json()["data"]
         self.assertEqual((v_boot["session"]["email"], v_boot["session"]["role"], v_boot["session"]["canWrite"]),
-                         ("lges-viewer", "viewer", False))
+                         ("team-viewer", "viewer", False))
         self.assertEqual(self.post("/api/v1/settings", v_sess, {"section": "product", "values": {"name": "X"}}).status,
                          403)
 
@@ -433,10 +433,10 @@ class GoogleSignInFlowTest(unittest.TestCase):
         self.assertEqual(self.post("/api/v1/access/users", admin_sess, {"email": "admin", "role": "viewer"}).status, 409)
 
         # 7. Delete custom ID account and verify immediate session revocation
-        del_res = self.post("/api/v1/access/users/delete", admin_sess, {"email": "lges-viewer"})
+        del_res = self.post("/api/v1/access/users/delete", admin_sess, {"email": "team-viewer"})
         self.assertEqual(del_res.status, 200)
         self.assertEqual(self.request("GET", "/api/v1/bootstrap", cookies={"cp_session": v_sess}).status, 401)
-        self.post("/api/v1/access/users/delete", admin_sess, {"email": "lges-admin"})
+        self.post("/api/v1/access/users/delete", admin_sess, {"email": "team-admin"})
 
 
 class GoogleModeConfigTest(unittest.TestCase):

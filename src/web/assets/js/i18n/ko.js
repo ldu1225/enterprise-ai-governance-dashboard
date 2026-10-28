@@ -1856,7 +1856,7 @@ const KO = {
   'Password updated': '비밀번호가 변경되었습니다',
   'Account ID, email or domain': '계정 아이디, 이메일 또는 도메인',
   'Password (required for ID login, optional for Google OAuth)': '비밀번호 (아이디 로그인 시 필수)',
-  'Enter an account ID (e.g. lges-admin, viewer1) with a password for direct ID/Password login, or enter a Google email / *@domain rule.': '아이디/비밀번호 직접 로그인용 계정(예: lges-admin, viewer1)과 비밀번호를 입력하거나, Google 이메일 / *@도메인 규칙을 입력하세요.',
+  'Enter an account ID (e.g. team-admin, viewer1) with a password for direct ID/Password login, or enter a Google email / *@domain rule.': '아이디/비밀번호 직접 로그인용 계정(예: team-admin, viewer1)과 비밀번호를 입력하거나, Google 이메일 / *@도메인 규칙을 입력하세요.',
   'Accounts & passwords': '계정 및 비밀번호 관리',
   'Manage ID/Password accounts (including the built-in admin account) and approved Google accounts. Administrators can change settings; viewers have read-only access.': '아이디/비밀번호 계정(기본 admin 계정 포함) 및 승인된 Google 계정을 관리합니다. 관리자는 설정을 변경할 수 있고 뷰어는 읽기 전용으로 조회합니다.',
   'Enter an account ID, email address, or *@domain pattern.': '계정 아이디, 이메일 주소 또는 *@도메인 패턴을 입력해 주세요.',
