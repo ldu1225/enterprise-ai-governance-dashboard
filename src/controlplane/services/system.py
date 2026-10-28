@@ -226,9 +226,21 @@ def run_health(ctx):
         if not configured:
             return unconfigured
         model = s["ai_engine"]["default_model"]
-        client = ctx.app.ai.client(ctx.project, s["ai_engine"].get("location") or "global", ctx.quota_project)
+        loc = s["ai_engine"].get("location") or "global"
+        client = ctx.app.ai.client(ctx.project, loc, ctx.quota_project)
         try:
-            client.models.get(model=model)
+            client.models.get(model=model, config={"http_options": {"timeout": 12000}})
+        except TypeError:
+            try:
+                client.models.get(model=model)
+            except Exception as err:  # pylint: disable=broad-except
+                status = getattr(err, "code", None) or getattr(err, "status_code", None)
+                LOG.info("ai engine health check failed status=%s", status)
+                if status in (401, 403):
+                    return "error", "Access to the AI engine was denied for the service identity."
+                if status == 404:
+                    return "error", "The default model %s is not available in %s." % (model, s["ai_engine"]["location"])
+                return "error", "The AI engine is temporarily unavailable."
         except Exception as err:  # pylint: disable=broad-except
             status = getattr(err, "code", None) or getattr(err, "status_code", None)
             LOG.info("ai engine health check failed status=%s", status)
@@ -237,7 +249,7 @@ def run_health(ctx):
             if status == 404:
                 return "error", "The default model %s is not available in %s." % (model, s["ai_engine"]["location"])
             return "error", "The AI engine is temporarily unavailable."
-        return "ok", "%s reachable in %s" % (model, s["ai_engine"].get("location") or "global")
+        return "ok", "%s reachable in %s" % (model, loc)
 
     def store():
         p = ctx.app.settings.persistence()

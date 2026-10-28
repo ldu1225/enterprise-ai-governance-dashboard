@@ -600,6 +600,7 @@ async function renderPage(force = false) {
   // Personal widgets live next to the page (not inside it), so page re-renders never remove them.
   const widgetsHost = h('div', { class: 'page-widgets' });
   mount(shell.content, h('div', { class: 'page-wrap' }, container, widgetsHost));
+  if (shell.updated) shell.updated.textContent = `${t('Loading')}\u2026`;
   try {
     const mod = await r.load();
     if (controller.signal.aborted) return;
@@ -624,6 +625,7 @@ async function renderPage(force = false) {
     shell.updated.textContent = t('Updated {time}', { time: fmt.time(store.lastUpdated.toISOString()) });
   } catch (err) {
     if (isAbort(err)) return;
+    if (shell.updated) shell.updated.textContent = '';
     mount(container, errorState(err, { onRetry: () => renderPage() }));
   }
 }

@@ -66,21 +66,30 @@ def _project_time_series(ctx, project, metric, group_by, start, end, max_pages=2
 
 def time_series(ctx, metric, group_by, start, end, max_pages=20):
     """Daily ALIGN_SUM/REDUCE_SUM series across scanned projects. Returns list of (labels dict, [(day, value)])."""
-    projects = getattr(ctx, "projects", None) or [ctx.project]
-    if len(projects) <= 1:
-        return _project_time_series(ctx, ctx.project, metric, group_by, start, end, max_pages=max_pages)
-    tasks = {proj: (lambda p=proj: _project_time_series(ctx, p, metric, group_by, start, end, max_pages=max_pages))
-             for proj in projects}
-    res = ctx.run(tasks)
-    out = []
-    for proj in projects:
-        ok, value = res[proj]
-        if not ok:
-            if proj == ctx.project:
-                raise value
-            continue
-        out.extend(value)
-    return out
+    def load():
+        projects = getattr(ctx, "projects", None) or [ctx.project]
+        if len(projects) <= 1:
+            return _project_time_series(ctx, ctx.project, metric, group_by, start, end, max_pages=max_pages)
+        tasks = {proj: (lambda p=proj: _project_time_series(ctx, p, metric, group_by, start, end, max_pages=max_pages))
+                 for proj in projects}
+        res = ctx.run(tasks)
+        out = []
+        for proj in projects:
+            ok, value = res[proj]
+            if not ok:
+                if proj == ctx.project:
+                    raise value
+                continue
+            out.extend(value)
+        return out
+
+    cache = getattr(getattr(ctx, "app", None), "cache", None)
+    if cache is not None:
+        key = ("mon_ts", ctx.version, metric, tuple(group_by), iso(start), iso(end), max_pages)
+        ttl = int(ctx.settings["server"].get("cache_ttl_seconds") or 120)
+        val, _ = cache.get_or_compute(key, ttl, load)
+        return val
+    return load()
 
 
 def token_counts(ctx, start, end):

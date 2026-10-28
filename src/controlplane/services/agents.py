@@ -116,41 +116,49 @@ def discovery_agents(ctx):
     projects = getattr(ctx, "projects", None) or [ctx.project]
     found = []
     ok_count = 0
+    loc_tasks = {}
     for project in projects:
-        is_primary = project == ctx.project
         for location in locations:
             if not config.LOCATION_RE.match(location or ""):
                 continue
             url = "%s/v1alpha/projects/%s/locations/%s/collections/default_collection/engines" % (
                 de_host(location), project, location)
-            try:
-                engines, _ = ctx.gcp.paginate(url, quota_project=ctx.quota_project, items_key="engines", page_size=100,
-                                              max_pages=3)
-            except GcpError as err:
-                if is_primary:
-                    ctx.warn_error("api:discoveryengine.engines", err, "Discovery Engine in %s" % location)
-                continue
-            ctx.add_source("api:discoveryengine.engines")
-            ok_count += 1
-            engine_by_name = {e.get("name"): e for e in engines if isinstance(e, dict) and ENGINE_NAME_RE.match(e.get("name") or "")}
-            names = list(engine_by_name.keys())
-            if len(names) > MAX_ENGINES and is_primary:
-                ctx.warn("api:discoveryengine.engines", "truncated", "Only the first %d engines are inspected." % MAX_ENGINES)
-            tasks = {name: (lambda n=name, loc=location, w=is_primary: _engine_agents(ctx, loc, n, warn=w))
-                     for name in names[:MAX_ENGINES]}
-            for name, (ok, value) in ctx.run(tasks).items():
-                eng = engine_by_name[name]
-                if not ok:
-                    if eng.get("solutionType") == "SOLUTION_TYPE_SEARCH":
-                        found.append((location, "search_engine", dict(eng, _project=project)))
-                    elif is_primary:
-                        ctx.warn_error("api:discoveryengine.agents", value, "Discovery Engine assistants")
-                    continue
-                ctx.add_source("api:discoveryengine.agents")
-                if not value and eng.get("solutionType") == "SOLUTION_TYPE_SEARCH":
-                    found.append((location, "search_engine", dict(eng, _project=project)))
-                for kind, item in value:
-                    found.append((location, kind, dict(item, _project=project)))
+            loc_tasks[(project, location)] = (lambda u=url: ctx.gcp.paginate(
+                u, quota_project=ctx.quota_project, items_key="engines", page_size=100, max_pages=3))
+    loc_res = ctx.run(loc_tasks)
+    engine_tasks = {}
+    engine_meta = {}
+    for (project, location), (ok, value) in loc_res.items():
+        is_primary = project == ctx.project
+        if not ok:
+            if is_primary:
+                ctx.warn_error("api:discoveryengine.engines", value, "Discovery Engine in %s" % location)
+            continue
+        ctx.add_source("api:discoveryengine.engines")
+        ok_count += 1
+        engines, _ = value
+        engine_by_name = {e.get("name"): e for e in engines if isinstance(e, dict) and ENGINE_NAME_RE.match(e.get("name") or "")}
+        names = list(engine_by_name.keys())
+        if len(names) > MAX_ENGINES and is_primary:
+            ctx.warn("api:discoveryengine.engines", "truncated", "Only the first %d engines are inspected." % MAX_ENGINES)
+        for name in names[:MAX_ENGINES]:
+            key = (project, location, name)
+            engine_meta[key] = engine_by_name[name]
+            engine_tasks[key] = (lambda n=name, loc=location, w=is_primary: _engine_agents(ctx, loc, n, warn=w))
+    for (project, location, name), (ok, value) in ctx.run(engine_tasks).items():
+        is_primary = project == ctx.project
+        eng = engine_meta[(project, location, name)]
+        if not ok:
+            if eng.get("solutionType") == "SOLUTION_TYPE_SEARCH":
+                found.append((location, "search_engine", dict(eng, _project=project)))
+            elif is_primary:
+                ctx.warn_error("api:discoveryengine.agents", value, "Discovery Engine assistants")
+            continue
+        ctx.add_source("api:discoveryengine.agents")
+        if not value and eng.get("solutionType") == "SOLUTION_TYPE_SEARCH":
+            found.append((location, "search_engine", dict(eng, _project=project)))
+        for kind, item in value:
+            found.append((location, kind, dict(item, _project=project)))
     return found, ok_count
 
 
@@ -189,7 +197,7 @@ def agent_directory(ctx):
     def load(child):
         names = {}
         try:
-            found, _ = discovery_agents(child)
+            found, _ = child.memo("discovery_agents", "all", discovery_agents, ttl=300)
         except Exception:  # pylint: disable=broad-except
             found = []
         for _location, kind, obj in found:
@@ -258,7 +266,10 @@ def registry_data(ctx, rng):
     asrc = ctx.audit_source(GE_ACTIVITY)
     dsrc = ctx.audit_source(AUDIT_DATA_ACCESS)
     acsrc = ctx.audit_source(AUDIT_ACTIVITY)
-    tasks = {"engines": lambda: reasoning_engines(ctx), "de": lambda: discovery_agents(ctx)}
+    tasks = {
+        "engines": lambda: ctx.memo("reasoning_engines", "all", reasoning_engines, ttl=300),
+        "de": lambda: ctx.memo("discovery_agents", "all", discovery_agents, ttl=300),
+    }
     if asrc:
         tasks["activity"] = lambda: activity_calls(ctx, rng, asrc)
     if dsrc:
