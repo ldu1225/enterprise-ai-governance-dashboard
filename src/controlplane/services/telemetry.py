@@ -78,11 +78,23 @@ def all_connectors(ctx):
 
 
 def discover_datasets(ctx):
-    out = [(ctx.project, ctx.audit_dataset)]
+    out = []
+    for proj in ctx.projects:
+        if (proj, ctx.audit_dataset) not in out:
+            out.append((proj, ctx.audit_dataset))
     for ref in ctx.ws.get("telemetry_datasets") or []:
         parsed = config.parse_dataset_ref(ref, ctx.project)
         if parsed and parsed not in out:
             out.append(parsed)
+    return out
+
+
+def _explicit_datasets(ctx):
+    out = {(ctx.project, ctx.audit_dataset)}
+    for ref in ctx.ws.get("telemetry_datasets") or []:
+        parsed = config.parse_dataset_ref(ref, ctx.project)
+        if parsed:
+            out.add(parsed)
     return out
 
 
@@ -96,19 +108,22 @@ def _discover_tables(ctx, connectors_by_table):
     """Tables of the audit and telemetry datasets, or None when no dataset could be scanned."""
     tables = []
     scanned = 0
+    explicit = _explicit_datasets(ctx)
     for project, dataset in discover_datasets(ctx):
-        label = "bigquery:%s" % dataset
+        label = "bigquery:%s" % dataset if project == ctx.project else "bigquery:%s.%s" % (project, dataset)
         try:
             groups = ctx.registry.tables(project, dataset, ctx.quota_project, ctx.max_bytes)
         except GcpError as err:
-            ctx.warn_error(label, err, "BigQuery dataset %s" % dataset)
+            if (project, dataset) in explicit:
+                ctx.warn_error(label, err, "BigQuery dataset %s" % dataset)
             continue
         ctx.add_source("bigquery:%s.INFORMATION_SCHEMA.TABLES" % dataset)
         scanned += 1
         try:
             stats = _table_stats(ctx, project, dataset)
         except GcpError as err:
-            ctx.warn_error(label, err, "Table statistics for %s" % dataset)
+            if (project, dataset) in explicit:
+                ctx.warn_error(label, err, "Table statistics for %s" % dataset)
             stats = {}
         names = sorted(groups)
         if len(names) > MAX_TABLES:
@@ -151,21 +166,36 @@ def _discover_tables(ctx, connectors_by_table):
 
 
 def _list_logs(ctx):
-    """[{logName, shortName}] of the project, or None when the log list failed."""
-    try:
-        names, truncated = ctx.gcp.paginate("%s/projects/%s/logs" % (LOGGING_V2, ctx.project),
-                                            quota_project=ctx.quota_project, items_key="logNames", page_size=1000,
-                                            max_pages=5)
-    except GcpError as err:
-        ctx.warn_error("api:logging.logs", err, "The Cloud Logging log list")
+    """[{logName, shortName}] across scanned projects, or None when the log list failed."""
+    tasks = {proj: (lambda p=proj: ctx.gcp.paginate("%s/projects/%s/logs" % (LOGGING_V2, p),
+                                                    quota_project=ctx.quota_project, items_key="logNames",
+                                                    page_size=1000, max_pages=5))
+             for proj in ctx.projects}
+    results = ctx.run(tasks)
+    out = []
+    seen = set()
+    succeeded = 0
+    truncated_any = False
+    for proj, (ok, val) in results.items():
+        if not ok:
+            if proj == ctx.project:
+                ctx.warn_error("api:logging.logs", val, "The Cloud Logging log list")
+            continue
+        succeeded += 1
+        names, truncated = val
+        if truncated:
+            truncated_any = True
+        for log_name in names:
+            if isinstance(log_name, str) and "/logs/" in log_name:
+                short = urllib.parse.unquote(log_name.split("/logs/", 1)[1])
+                if short not in seen:
+                    seen.add(short)
+                    out.append({"logName": log_name, "shortName": short, "project": proj})
+    if not succeeded:
         return None
     ctx.add_source("api:logging.logs")
-    if truncated:
+    if truncated_any:
         ctx.warn("api:logging.logs", "truncated", "Only the first 5000 log names are listed.")
-    out = []
-    for log_name in names:
-        if isinstance(log_name, str) and "/logs/" in log_name:
-            out.append({"logName": log_name, "shortName": urllib.parse.unquote(log_name.split("/logs/", 1)[1])})
     return out
 
 

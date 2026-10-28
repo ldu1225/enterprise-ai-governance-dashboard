@@ -236,11 +236,21 @@ function workspace(ctx, panel, data, editable) {
   const tzOptions = ['UTC', 'Asia/Seoul', 'Asia/Tokyo', 'Asia/Singapore', 'Asia/Shanghai', 'Asia/Kolkata', 'Europe/London', 'Europe/Berlin', 'Europe/Paris', 'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'Australia/Sydney'];
   const curTz = getPath(data.effective, ['workspace', 'timezone']);
   if (curTz && !tzOptions.includes(curTz)) tzOptions.unshift(curTz);
+  const activeProjects = (store.get().meta && store.get().meta.workspace && store.get().meta.workspace.projects) || [];
+  if (activeProjects.length > 0) {
+    panel.append(card({
+      title: t('Scanned Google Cloud projects ({n})', { n: activeProjects.length }),
+      subtitle: t('Projects actively scanned across Agent Registry, Deployments, Gemini Enterprise, Cloud Monitoring and Telemetry.'),
+      body: h('div', { class: 'row wrap' }, activeProjects.map((p) => badge(p, p === getPath(data.effective, ['workspace', 'project_id']) ? 'info' : 'neutral', { mono: true }))),
+    }));
+  }
   panel.append(sectionForm(ctx, {
     title: t('Google Cloud workspace'), subtitle: t('The project and datasets the control plane reads from.'), section: 'workspace', data, editable,
     extraActions: testBtn,
     fields: [
       { path: ['project_id'], label: t('Project ID'), mono: true },
+      { path: ['scan_all_projects'], label: t('Auto-discover organization projects'), type: 'switch', help: t('Automatically scan all accessible active Google Cloud projects in the organization.') },
+      { path: ['projects'], label: t('Additional projects to scan'), type: 'list', mono: true, help: t('Comma separated project IDs scanned alongside the workspace project.') },
       { path: ['quota_project_id'], label: t('Quota project'), help: t('Project billed for API quota. Empty uses the workspace project.'), mono: true },
       { path: ['audit_dataset'], label: t('Audit log dataset'), help: t('BigQuery dataset receiving the Log Router sink.'), mono: true },
       { path: ['timezone'], label: t('Reporting timezone'), type: 'select', options: tzOptions.map((z) => ({ value: z, label: z })) },

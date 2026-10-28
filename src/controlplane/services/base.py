@@ -204,6 +204,61 @@ class Ctx:
         return self.ws["project_id"]
 
     @property
+    def known_projects(self):
+        """Projects known without making a blocking network call (configured + cached discovery)."""
+        out = []
+        if self.project and config.valid_project(self.project):
+            out.append(self.project)
+        for p in self.ws.get("projects") or []:
+            if config.valid_project(p) and p not in out:
+                out.append(p)
+        if self.ws.get("scan_all_projects", True) and hasattr(self.app, "cache"):
+            hit, cached = self.app.cache.get(("crm_projects", self.project))
+            if hit:
+                for p in cached or []:
+                    if isinstance(p, str) and config.valid_project(p) and p not in out and len(out) < 25:
+                        out.append(p)
+        return out or ([self.project] if self.project else [])
+
+    @property
+    def projects(self):
+        """Ordered list of GCP project IDs to scan: primary project first, then configured
+        workspace.projects, then auto-discovered active projects when scan_all_projects is enabled."""
+        out = []
+        if self.project and config.valid_project(self.project):
+            out.append(self.project)
+        for p in self.ws.get("projects") or []:
+            if config.valid_project(p) and p not in out:
+                out.append(p)
+        if (self.project and config.valid_project(self.project)
+                and self.ws.get("scan_all_projects", True)
+                and hasattr(self.app, "gcp") and hasattr(self.gcp, "request")):
+            def discover():
+                try:
+                    payload, _ = self.gcp.request(
+                        "GET",
+                        "https://cloudresourcemanager.googleapis.com/v3/projects:search?pageSize=50",
+                        quota_project=self.quota_project,
+                        timeout=10,
+                    )
+                    found = []
+                    for item in (payload or {}).get("projects") or []:
+                        if not isinstance(item, dict) or item.get("state") != "ACTIVE":
+                            continue
+                        pid = (item.get("projectId") or "").strip().lower()
+                        if not config.valid_project(pid) or pid.startswith("ai-control-plane-auth-"):
+                            continue
+                        found.append(pid)
+                    return found
+                except Exception:  # pylint: disable=broad-except
+                    return []
+            discovered, _ = self.app.cache.get_or_compute(("crm_projects", self.project), 300, discover)
+            for p in discovered or []:
+                if p not in out and len(out) < 25:
+                    out.append(p)
+        return out or [self.project]
+
+    @property
     def quota_project(self):
         return config.quota_project(self.settings)
 

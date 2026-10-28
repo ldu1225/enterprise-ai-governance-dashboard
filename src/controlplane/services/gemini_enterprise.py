@@ -358,9 +358,10 @@ def _date_str(value):
     return None
 
 
-def license_configs(ctx, location="global"):
+def license_configs(ctx, location="global", project=None):
     """License configurations distributed to this project in one location: (configs, active seats or None)."""
-    url = "%s/v1alpha/projects/%s/locations/%s/licenseConfigs" % (discovery_host(location), ctx.project, location)
+    project = project or ctx.project
+    url = "%s/v1alpha/projects/%s/locations/%s/licenseConfigs" % (discovery_host(location), project, location)
     items, _ = ctx.gcp.paginate(url, quota_project=ctx.quota_project, items_key="licenseConfigs", max_pages=5)
     configs = []
     active = {}
@@ -371,7 +372,7 @@ def license_configs(ctx, location="global"):
         cfg = {"name": item.get("name"), "displayName": item.get("displayName"), "state": item.get("state"),
                "licenseCount": count, "subscriptionTier": item.get("subscriptionTier"),
                "startDate": _date_str(item.get("startDate")), "endDate": _date_str(item.get("endDate")),
-               "location": location}
+               "location": location, "project": project}
         configs.append(cfg)
         if item.get("state") == "ACTIVE":
             key = item.get("name") or "config-%d" % len(active)
@@ -380,61 +381,80 @@ def license_configs(ctx, location="global"):
     return configs, purchased
 
 
-def user_licenses(ctx, location="global"):
+def user_licenses(ctx, location="global", project=None):
+    project = project or ctx.project
     url = ("%s/v1alpha/projects/%s/locations/%s/userStores/default_user_store/userLicenses"
-           % (discovery_host(location), ctx.project, location))
+           % (discovery_host(location), project, location))
     return ctx.gcp.paginate(url, quota_project=ctx.quota_project, items_key="userLicenses", page_size=500,
                             max_pages=20)
 
 
 def licenses(ctx):
-    """Seats in every configured location. Subscriptions are distributed to a project per location (global,
-    us, eu), so purchased and assigned seats are summed over DISCOVERY_ENGINE_LOCATIONS."""
+    """Seats in every configured location across scanned projects. Subscriptions are distributed to a project per
+    location (global, us, eu), so purchased and assigned seats are summed over DISCOVERY_ENGINE_LOCATIONS."""
     today = timeutil.today_in(ctx.tz_name)
     tz = timeutil.get_zone(ctx.tz_name)
     locations = discovery_locations(ctx)
+    projects = getattr(ctx, "projects", None) or [ctx.project]
     out = {"configs": None, "purchased": None, "assigned": None, "unassigned": None, "users": None,
            "idleThresholdDays": IDLE_LICENSE_DAYS, "idleAssigned": None, "userLicensesAvailable": False,
            "locations": locations}
     tasks = {}
-    for loc in locations:
-        tasks["configs:" + loc] = (lambda where=loc: license_configs(ctx, where))
-        tasks["users:" + loc] = (lambda where=loc: user_licenses(ctx, where))
+    for proj in projects:
+        for loc in locations:
+            tasks[("configs", proj, loc)] = (lambda where=loc, p=proj: license_configs(ctx, where, p))
+            tasks[("users", proj, loc)] = (lambda where=loc, p=proj: user_licenses(ctx, where, p))
     res = ctx.run(tasks)
     configs, purchased, configs_ok = [], None, False
+    seen_configs = set()
     users, users_ok = [], False
-    for loc in locations:
-        ok, value = res["configs:" + loc]
-        if ok:
-            configs_ok = True
-            loc_configs, loc_purchased = value
-            configs.extend(loc_configs)
-            if loc_purchased is not None:
-                purchased = (purchased or 0) + loc_purchased
-            ctx.add_source("api:discoveryengine.licenseConfigs")
-        else:
-            ctx.warn_error("api:discoveryengine.licenseConfigs", value, "The Discovery Engine license API (%s)" % loc)
-        ok, value = res["users:" + loc]
-        if not ok:
-            ctx.warn_error("api:discoveryengine.userLicenses", value,
-                           "The Discovery Engine user license API (%s)" % loc)
-            continue
-        users_ok = True
-        items, truncated = value
-        ctx.add_source("api:discoveryengine.userLicenses")
-        if truncated:
-            ctx.warn("api:discoveryengine.userLicenses", "truncated",
-                     "Only the first 10000 user licenses in %s are shown." % loc)
-        for item in items:
-            if not isinstance(item, dict):
+    seen_users = set()
+    for proj in projects:
+        is_primary = proj == ctx.project
+        for loc in locations:
+            ok, value = res[("configs", proj, loc)]
+            if ok:
+                configs_ok = True
+                loc_configs, _loc_purchased = value
+                for cfg in loc_configs:
+                    ckey = (cfg.get("name") or "", loc)
+                    if ckey in seen_configs:
+                        continue
+                    seen_configs.add(ckey)
+                    configs.append(cfg)
+                    if cfg.get("state") == "ACTIVE":
+                        purchased = (purchased or 0) + to_int(cfg.get("licenseCount"))
+                if loc_configs and purchased is None:
+                    purchased = 0
+                ctx.add_source("api:discoveryengine.licenseConfigs")
+            elif is_primary:
+                ctx.warn_error("api:discoveryengine.licenseConfigs", value, "The Discovery Engine license API (%s)" % loc)
+            ok, value = res[("users", proj, loc)]
+            if not ok:
+                if is_primary:
+                    ctx.warn_error("api:discoveryengine.userLicenses", value,
+                                   "The Discovery Engine user license API (%s)" % loc)
                 continue
-            email = (item.get("userPrincipal") or "").strip().lower()
-            if not email:
-                continue
-            last = parse_rfc3339(item.get("lastLoginTime"))
-            idle = (today - last.astimezone(tz).date()).days if last else None
-            users.append({"uid": uid_for(email), "email": email, "state": item.get("licenseAssignmentState"),
-                          "lastLogin": iso(last), "idleDays": idle, "location": loc})
+            users_ok = True
+            items, truncated = value
+            ctx.add_source("api:discoveryengine.userLicenses")
+            if truncated and is_primary:
+                ctx.warn("api:discoveryengine.userLicenses", "truncated",
+                         "Only the first 10000 user licenses in %s are shown." % loc)
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                email = (item.get("userPrincipal") or "").strip().lower()
+                if not email:
+                    continue
+                ukey = (email, loc)
+                if ukey in seen_users:
+                    continue
+                seen_users.add(ukey)
+                last = parse_rfc3339(item.get("lastLoginTime"))
+                idle = (today - last.astimezone(tz).date()).days if last else None
+                users.append({"uid": uid_for(email), "email": email, "state": item.get("licenseAssignmentState"),
+                              "lastLogin": iso(last), "idleDays": idle, "location": loc, "project": proj})
     if configs_ok:
         out["configs"], out["purchased"] = configs, purchased
     if users_ok:
