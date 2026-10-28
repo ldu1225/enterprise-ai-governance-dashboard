@@ -252,7 +252,8 @@ def ai_spend(ctx, rng):
     src = ctx.billing_source()
     if src is None:
         return None
-    daily, currency, has_credit_col = daily_totals(ctx, src, rng, "all", ai_only=True)
+    project_filter = getattr(ctx, "selected_project", "all") or "all"
+    daily, currency, has_credit_col = daily_totals(ctx, src, rng, project_filter, ai_only=True)
     ctx.add_source(src.label)
     s = spend_summary(daily, rng)
     has_credits = has_credit_col and abs(s["credits"]) > 0.0

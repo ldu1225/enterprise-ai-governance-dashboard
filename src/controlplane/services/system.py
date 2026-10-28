@@ -39,7 +39,7 @@ def bootstrap(ctx, handler):
                      "accentColor": s["branding"]["accent_color"], "defaultLocale": s["branding"]["default_locale"],
                      "defaultTheme": s["branding"]["default_theme"]},
         "workspace": {"configured": config.workspace_configured(s), "projectId": ws["project_id"],
-                      "projects": list(getattr(ctx, "known_projects", None) or getattr(ctx, "projects", None) or [ws["project_id"]]),
+                      "projects": list(getattr(ctx, "all_projects", None) or getattr(ctx, "projects", None) or [ws["project_id"]]),
                       "scanAllProjects": bool(ws.get("scan_all_projects", True)),
                       "auditDataset": ws["audit_dataset"],
                       # The billing account ID is an administrator detail; viewers do not receive it.

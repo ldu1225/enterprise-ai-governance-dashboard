@@ -1872,6 +1872,21 @@ const KO = {
   'ID / Password': '아이디 / 비밀번호',
   'Google OAuth': 'Google 계정',
   'Create ID/Password accounts, change passwords (including admin), or pre-register Google accounts.': '고객용 아이디/비밀번호 계정을 생성하거나, admin을 포함한 비밀번호 변경 및 Google 계정 사전 등록을 관리합니다.',
+  'Connected projects ({n})': '연동된 프로젝트 ({n}개)',
+  'All connected projects ({n})': '전체 프로젝트 통합 ({n}개)',
+  'Primary workspace project': '기본 워크스페이스 프로젝트',
+  'Filtered to single project': '단일 프로젝트 필터링 중',
+  'Viewing all connected projects ({n})': '전체 연동 프로젝트 통합 조회 ({n}개)',
+  'Filtered to project: {id}': '프로젝트 필터 적용: {id}',
+  'Showing metrics and resources for {id}': '{id} 프로젝트의 지표와 리소스를 조회합니다',
+  'Connected Google Cloud projects ({n})': '연동된 Google Cloud 프로젝트 ({n}개)',
+  'Select a project to filter or view all connected projects together.': '클릭하여 특정 프로젝트만 필터링하거나 전체 연동 프로젝트를 통합 조회합니다.',
+  'Auto-discovery': '자동 탐색 켜짐',
+  'Unified governance view across all {n} projects': '연동된 {n}개 프로젝트 전체 통합 거버넌스 보기',
+  'Project list ({n})': '연동 프로젝트 목록 ({n}개)',
+  'Primary': '기본 프로젝트',
+  'Connected': '연동됨',
+  'Manage connected projects': '연동 프로젝트 설정 및 관리',
 };
 
 export default KO;

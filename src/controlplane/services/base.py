@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 import logging
+import os
 import threading
 
 from .. import config
@@ -204,6 +205,13 @@ class Ctx:
         return self.ws["project_id"]
 
     @property
+    def selected_project(self):
+        raw = (self.params.get("project") or "all").strip().lower()
+        if raw and raw != "all" and config.valid_project(raw):
+            return raw
+        return "all"
+
+    @property
     def known_projects(self):
         """Projects known without making a blocking network call (configured + cached discovery)."""
         out = []
@@ -221,9 +229,8 @@ class Ctx:
         return out or ([self.project] if self.project else [])
 
     @property
-    def projects(self):
-        """Ordered list of GCP project IDs to scan: primary project first, then configured
-        workspace.projects, then auto-discovered active projects when scan_all_projects is enabled."""
+    def all_projects(self):
+        """Ordered list of all GCP project IDs in the workspace (primary + configured + auto-discovered)."""
         out = []
         if self.project and config.valid_project(self.project):
             out.append(self.project)
@@ -231,8 +238,10 @@ class Ctx:
             if config.valid_project(p) and p not in out:
                 out.append(p)
         if (self.project and config.valid_project(self.project)
+                and self.project not in ("demo-project", "my-project")
+                and (config.workspace_configured(self.settings) or os.environ.get("K_SERVICE"))
                 and self.ws.get("scan_all_projects", True)
-                and hasattr(self.app, "gcp") and hasattr(self.gcp, "request")):
+                and hasattr(self.app, "gcp") and type(self.gcp).__name__ == "Gcp"):
             def discover():
                 try:
                     payload, _ = self.gcp.request(
@@ -257,6 +266,15 @@ class Ctx:
                 if p not in out and len(out) < 25:
                     out.append(p)
         return out or [self.project]
+
+    @property
+    def projects(self):
+        """Ordered list of GCP project IDs to scan for this request (filtered by ?project= when specified)."""
+        all_p = self.all_projects
+        sel = self.selected_project
+        if sel != "all" and sel in all_p:
+            return [sel]
+        return all_p
 
     @property
     def quota_project(self):
@@ -397,7 +415,7 @@ class Ctx:
             return value, list(child.warnings), set(child.sources)
 
         ttl = ttl if ttl is not None else int(self.settings["server"].get("cache_ttl_seconds") or 0)
-        cache_key = ("memo", name, self.version, key)
+        cache_key = ("memo", name, self.version, self.selected_project, key)
         (value, warnings, sources), _ = self.app.cache.get_or_compute(
             cache_key, ttl, compute, cacheable=lambda v: not any(w["code"] in TRANSIENT_CODES for w in v[1]))
         for w in warnings:
