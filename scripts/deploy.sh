@@ -49,11 +49,11 @@ source "$ROOT/scripts/lib/common.sh"
 source "$CONFIG"
 
 # ------------------------------------------------------------------------------------ settings
-PROJECT_ID="${PROJECT_ID:-}"
-REGION="${REGION:-us-central1}"
-SERVICE_NAME="${SERVICE_NAME:-ai-control-plane}"
+PROJECT_ID="$(normalize_project_id "${PROJECT_ID:-}")"
+REGION="$(trim_ws "${REGION:-us-central1}")"
+SERVICE_NAME="$(trim_ws "${SERVICE_NAME:-ai-control-plane}")"
 ADMIN_EMAILS="${ADMIN_EMAILS:-}"
-ACCESS_MODE="${ACCESS_MODE:-google}"
+ACCESS_MODE="$(trim_ws "${ACCESS_MODE:-google}")"
 ALLOWED_USERS="${ALLOWED_USERS:-}"
 IAP_MEMBERS="${IAP_MEMBERS:-}"
 BRIDGE_MEMBERS="${BRIDGE_MEMBERS:-allAuthenticatedUsers}"
@@ -70,18 +70,18 @@ ORGANIZATION_NAME="${ORGANIZATION_NAME:-Your Organization}"
 PRODUCT_NAME="${PRODUCT_NAME:-}"
 DEFAULT_LOCALE="${DEFAULT_LOCALE:-en}"
 WORKSPACE_TIMEZONE="${WORKSPACE_TIMEZONE:-UTC}"
-AUDIT_DATASET="${AUDIT_DATASET:-ge_analytics}"
+AUDIT_DATASET="$(trim_ws "${AUDIT_DATASET:-ge_analytics}")"
 CREATE_LOG_SINK="${CREATE_LOG_SINK:-true}"
-DATASET_LOCATION="${DATASET_LOCATION:-US}"
+DATASET_LOCATION="$(trim_ws "${DATASET_LOCATION:-US}")"
 ENABLE_DATA_ACCESS_LOGS="${ENABLE_DATA_ACCESS_LOGS:-false}"
 # Usage logs (observability) and user/prompt logging (sensitiveLoggingEnabled) of every Gemini Enterprise
 # app in DISCOVERY_ENGINE_LOCATIONS. Without GE_PROMPT_LOGGING=true, userIamPrincipal is logged as <elided>.
 ENABLE_GE_OBSERVABILITY="${ENABLE_GE_OBSERVABILITY:-true}"
 GE_PROMPT_LOGGING="${GE_PROMPT_LOGGING:-true}"
-BILLING_PROJECT_ID="${BILLING_PROJECT_ID:-}"
-BILLING_DATASET="${BILLING_DATASET:-}"
-BILLING_TABLE="${BILLING_TABLE:-}"
-BILLING_ACCOUNT_ID="${BILLING_ACCOUNT_ID:-}"
+BILLING_PROJECT_ID="$(normalize_project_id "${BILLING_PROJECT_ID:-}")"
+BILLING_DATASET="$(trim_ws "${BILLING_DATASET:-}")"
+BILLING_TABLE="$(trim_ws "${BILLING_TABLE:-}")"
+BILLING_ACCOUNT_ID="$(trim_ws "${BILLING_ACCOUNT_ID:-}")"
 # Empty: step 6 detects the locations with a Gemini Enterprise app or license (global when there is none).
 DISCOVERY_ENGINE_LOCATIONS="${DISCOVERY_ENGINE_LOCATIONS:-}"
 AGENT_ENGINE_REGIONS="${AGENT_ENGINE_REGIONS:-$REGION}"
@@ -90,11 +90,11 @@ ENFORCEMENT_SCHEDULE="${ENFORCEMENT_SCHEDULE:-}"
 AI_DEFAULT_MODEL="${AI_DEFAULT_MODEL:-}"
 AI_LOCATION="${AI_LOCATION:-}"
 IMAGE="${IMAGE:-}"
-AR_REPOSITORY="${AR_REPOSITORY:-ai-control-plane}"
-SERVICE_ACCOUNT_ID="${SERVICE_ACCOUNT_ID:-${SERVICE_NAME:0:27}-sa}"
-SETTINGS_BUCKET="${SETTINGS_BUCKET:-${PROJECT_ID}-${SERVICE_NAME}-settings}"
-SESSION_SECRET_NAME="${SESSION_SECRET_NAME:-${SERVICE_NAME}-session-secret}"
-OAUTH_SECRET_NAME="${OAUTH_SECRET_NAME:-${SERVICE_NAME}-oauth-client-secret}"
+AR_REPOSITORY="$(trim_ws "${AR_REPOSITORY:-ai-control-plane}")"
+SERVICE_ACCOUNT_ID="$(trim_ws "${SERVICE_ACCOUNT_ID:-${SERVICE_NAME:0:27}-sa}")"
+SETTINGS_BUCKET="$(trim_ws "${SETTINGS_BUCKET:-}")"
+SESSION_SECRET_NAME="$(trim_ws "${SESSION_SECRET_NAME:-${SERVICE_NAME}-session-secret}")"
+OAUTH_SECRET_NAME="$(trim_ws "${OAUTH_SECRET_NAME:-${SERVICE_NAME}-oauth-client-secret}")"
 MEMORY="${MEMORY:-1Gi}"
 CPU="${CPU:-1}"
 MIN_INSTANCES="${MIN_INSTANCES:-0}"
@@ -102,10 +102,13 @@ MAX_INSTANCES="${MAX_INSTANCES:-3}"
 
 # ---------------------------------------------------------------------------------- validation
 for tool in gcloud bq python3; do command -v "$tool" >/dev/null || die "$tool is required"; done
-[[ -n "$PROJECT_ID" && "$PROJECT_ID" != your-* ]] || die "set PROJECT_ID in $CONFIG"
+validate_project_id "$PROJECT_ID" "$CONFIG"
+[[ -z "$BILLING_PROJECT_ID" ]] || validate_project_id "$BILLING_PROJECT_ID" "$CONFIG (BILLING_PROJECT_ID)"
+[[ "$REGION" =~ ^[a-z]+-[a-z]+[0-9]+$ ]] || die "invalid REGION '${REGION}' in $CONFIG (for example 'asia-northeast3')"
 [[ -n "$ADMIN_EMAILS" && "$ADMIN_EMAILS" != *example.com* ]] || die "set ADMIN_EMAILS in $CONFIG"
 [[ "$SERVICE_NAME" =~ ^[a-z]([a-z0-9-]{0,40}[a-z0-9])?$ ]] || die "SERVICE_NAME must be lowercase letters, digits and hyphens"
-[[ ${#SETTINGS_BUCKET} -le 63 ]] || die "SETTINGS_BUCKET is longer than 63 characters; set a shorter SETTINGS_BUCKET"
+[[ -n "$SETTINGS_BUCKET" ]] || SETTINGS_BUCKET="$(default_settings_bucket "$PROJECT_ID" "$SERVICE_NAME")"
+[[ ${#SETTINGS_BUCKET} -le 63 ]] || die "SETTINGS_BUCKET '${SETTINGS_BUCKET}' is longer than 63 characters; set a shorter SETTINGS_BUCKET"
 case "$ACCESS_MODE" in
   google) ;;
   google_oauth) [[ -f "$OAUTH_CLIENT_JSON" ]] || die "ACCESS_MODE=google_oauth needs OAUTH_CLIENT_JSON (downloaded OAuth client JSON)" ;;
@@ -396,7 +399,7 @@ case "$ACCESS_MODE" in
       --member "serviceAccount:${IAP_AGENT}" --role roles/run.invoker --condition=None >/dev/null
     IFS=',' read -r -a members <<<"$BRIDGE_MEMBERS"
     for member in "${members[@]}"; do
-      member="${member// /}"
+      member="$(normalize_iam_member "$member")"
       [[ -n "$member" ]] || continue
       run gcloud iap web add-iam-policy-binding --resource-type=cloud-run --service="$BRIDGE_NAME" --region="$REGION" \
         --project="$PROJECT_ID" --member="$member" --role=roles/iap.httpsResourceAccessor --condition=None >/dev/null 2>&1 || true
@@ -480,7 +483,7 @@ PY
       --member "serviceAccount:${IAP_AGENT}" --role roles/run.invoker --condition=None >/dev/null
     IFS=',' read -r -a members <<<"$IAP_MEMBERS"
     for member in "${members[@]}"; do
-      member="${member// /}"
+      member="$(normalize_iam_member "$member")"
       [[ -n "$member" ]] || continue
       run gcloud iap web add-iam-policy-binding --resource-type=cloud-run --service="$SERVICE_NAME" --region="$REGION" \
         --project="$PROJECT_ID" --member="$member" --role=roles/iap.httpsResourceAccessor --condition=None >/dev/null

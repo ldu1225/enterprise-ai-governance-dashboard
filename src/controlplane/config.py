@@ -88,7 +88,7 @@ DEFAULTS = {
     "ai_engine": {
         "location": "global",
         "default_model": "gemini-3.8-flash",
-        "models": ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-4-argon"],
+        "models": ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-4-carbon", "gemini-4-argon"],
         "discover_models": True,
         "restrict_to_allowed": True,
     },
