@@ -455,7 +455,7 @@ function billingReportCard(ctx) {
       const foot = h('div', { class: 'card-body stack-sm' },
         h('div', { class: 'row wrap' },
           h('span', { class: 'fw-600' }, t('Total {v}', { v: money(state.credit ? totals.chargeable : totals.cost, ccy) })),
-          h('span', { class: 'text-muted' }, t('{n} people \u00b7 {from} \u2013 {to} ({tz})', { n: fmt.int(rows.length), from: fmt.date(r.start), to: fmt.date(r.end), tz: r.timezone || '' })),
+          h('span', { class: 'text-muted' }, t('{n} people \u00b7 {month} ({tz})', { n: fmt.int(rows.length), month: r.month || state.month, tz: r.timezone || '' })),
           r.complete === false ? badge(t('Month in progress'), 'warning', { size: 'sm' }) : null),
         h('p', { class: 'muted' }, t('Tokens are what Google logged for each call (businessaicode.googleapis.com/inference_response). Cost = tokens x unit price of each model; prompt tokens served from cache use the cache price. Google bills the project, not people, so this is how the project\'s usage is divided between people.')),
         state.credit ? h('p', { class: 'muted' }, t('Credit: {v} per person per month (Gemini Enterprise Antigravity credit, Settings > Governance).', { v: money(r.creditPerUser, ccy) })) : null);
@@ -997,6 +997,8 @@ function usedPriceTable(pricing, ccy) {
       },
       { key: 'input', label: t('Input'), align: 'num', render: (r) => (r.price ? money(r.price.input, ccy) : DASH), value: (r) => (r.price ? r.price.input : null) },
       { key: 'output', label: t('Output'), align: 'num', render: (r) => (r.price ? money(r.price.output, ccy) : DASH), value: (r) => (r.price ? r.price.output : null) },
+      // Cached prompt tokens are billed at their own price; without one they are counted at the input price.
+      { key: 'cached', label: t('Cached input'), align: 'num', render: (r) => (r.price && isNum(r.price.cached) ? money(r.price.cached, ccy) : h('span', { class: 'text-muted', title: t('No cached-token price: cached tokens count at the input price') }, DASH)), value: (r) => (r.price ? r.price.cached : null) },
     ],
     rows,
   });

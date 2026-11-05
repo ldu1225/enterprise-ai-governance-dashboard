@@ -2275,7 +2275,6 @@ const KO = {
   "Credit": "크레딧",
   "Amount to charge": "청구 금액",
   "Total {v}": "합계 {v}",
-  "{n} people · {from} – {to} ({tz})": "{n}명 · {from} – {to} ({tz})",
   "Month in progress": "집계 중인 달",
   "Tokens are what Google logged for each call (businessaicode.googleapis.com/inference_response). Cost = tokens x unit price of each model; prompt tokens served from cache use the cache price. Google bills the project, not people, so this is how the project's usage is divided between people.": "토큰은 Google이 호출마다 기록한 값입니다(businessaicode.googleapis.com/inference_response). 금액 = 토큰 × 모델별 단가이며, 캐시에서 제공된 입력 토큰에는 캐시 단가를 적용합니다. Google은 사람이 아니라 프로젝트 단위로 청구하므로, 이 표는 프로젝트 사용량을 사람별로 나눈 결과입니다.",
   "Credit: {v} per person per month (Gemini Enterprise Antigravity credit, Settings > Governance).": "크레딧: 1인당 월 {v} (Gemini Enterprise 포함 Antigravity 크레딧, 설정 > 거버넌스에서 변경)",
@@ -2289,6 +2288,8 @@ const KO = {
   "Antigravity credit per user and month (USD)": "1인당 월 Antigravity 크레딧 (USD)",
   "Gemini Enterprise Standard 10, Plus 15. Used by the credit-based cap and the monthly usage report.": "Gemini Enterprise Standard 10, Plus 15. 크레딧 기준 한도와 월간 사용 리포트에 쓰입니다.",
   "Turn on Metadata logging in Gemini Enterprise > Settings > AI developer tools > Compliance (off by default). From then on every Antigravity call writes {log} with the user and token counts, and usage, cost and caps appear here.": "Gemini Enterprise > 설정 > AI developer tools > 규정 준수에서 메타데이터 로깅을 켜세요(기본 꺼짐). 그때부터 Antigravity 호출마다 사용자와 토큰 수가 담긴 {log} 로그가 남고, 여기에 사용량·금액·한도가 표시됩니다.",
+  "No cached-token price: cached tokens count at the input price": "캐시 토큰 단가 없음: 캐시 토큰을 입력 단가로 계산합니다",
+  "{n} people · {month} ({tz})": "{n}명 · {month} ({tz})",
 };
 
 export default KO;
