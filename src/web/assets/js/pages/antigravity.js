@@ -725,7 +725,7 @@ function exceptionsCard(ctx, s) {
       { key: 'email', label: t('User'), render: (r) => userCell(r.email) },
       { key: 'type', label: t('Rule'), render: (r) => ruleBadge(r) },
       { key: 'detail', label: t('Detail'), sortable: false, wrap: true, render: (r) => h('span', { class: 'cell-sub' }, ruleDetail(r, ccy)), csv: (r) => ruleDetail(r, ccy) },
-      { key: 'note', label: t('Note'), sortable: false, wrap: true, render: (r) => h('span', { class: 'cell-sub' }, r.note || DASH) },
+      { key: 'note', label: t('Note'), sortable: false, wrap: true, render: (r) => h('span', { class: 'cell-sub' }, r.note ? serverText(r.note) : DASH), csv: (r) => r.note || '' },
       { key: 'createdAt', label: t('Added'), render: (r) => h('div', { class: 'cell-stack' }, h('span', null, r.createdAt ? fmt.dateTime(r.createdAt) : DASH), r.createdBy ? h('span', { class: 'cell-sub truncate' }, r.createdBy) : null), value: (r) => r.createdAt },
       { key: 'state', label: t('Access state'), render: (r) => statusBadge(r.state, { size: 'sm' }) },
       {
@@ -974,9 +974,14 @@ function pricingSummary(pricing, ccy) {
     if (pricing.fx && pricing.fx.rate) parts.push(t('1 USD = {rate} (Google rate, {date})', { rate: fmt.currency(pricing.fx.rate, ccy), date: pricing.fx.asOf ? fmt.date(String(pricing.fx.asOf).slice(0, 10), 'long') : DASH }));
     return parts.join(' \u00b7 ');
   }
-  return pricing.configured
-    ? t('Entered prices: {inp} input \u00b7 {out} output per 1M tokens', { inp: money(pricing.inputPerMillion, ccy), out: money(pricing.outputPerMillion, ccy) })
-    : t('Entered prices: not set');
+  if (!pricing.configured) return t('Entered prices: not set');
+  // Per-model prices win; the single default price applies only to models without one (0 = not set).
+  const models = (pricing.models || []).length;
+  const fallback = (pricing.inputPerMillion || 0) > 0 || (pricing.outputPerMillion || 0) > 0;
+  if (!models) return t('Entered prices: {inp} input \u00b7 {out} output per 1M tokens', { inp: money(pricing.inputPerMillion, ccy), out: money(pricing.outputPerMillion, ccy) });
+  const parts = [t('Entered prices for {n} models', { n: fmt.int(models) })];
+  if (fallback) parts.push(t('other models: {inp} input \u00b7 {out} output per 1M tokens', { inp: money(pricing.inputPerMillion, ccy), out: money(pricing.outputPerMillion, ccy) }));
+  return parts.join(' \u00b7 ');
 }
 
 function usedPriceTable(pricing, ccy) {
@@ -995,10 +1000,19 @@ function usedPriceTable(pricing, ccy) {
         render: (r) => h('div', { class: 'cell-stack' }, h('span', { class: 'cell-mono' }, r.model), h('div', null, sourceBadge(r.price))),
         csv: (r) => r.model,
       },
-      { key: 'input', label: t('Input'), align: 'num', render: (r) => (r.price ? money(r.price.input, ccy) : DASH), value: (r) => (r.price ? r.price.input : null) },
+      {
+        // Cached prompt tokens are billed at their own price (second line); without one they count at the input price.
+        key: 'input', label: t('Input'), align: 'num',
+        render: (r) => (r.price
+          ? h('div', { class: 'cell-stack' }, h('span', null, money(r.price.input, ccy)),
+            isNum(r.price.cached)
+              ? h('span', { class: 'cell-sub' }, t('cached {v}', { v: money(r.price.cached, ccy) }))
+              : h('span', { class: 'cell-sub', title: t('No cached-token price: cached tokens count at the input price') }, t('cached = input')))
+          : DASH),
+        value: (r) => (r.price ? r.price.input : null),
+        csv: (r) => (r.price ? r.price.input : ''),
+      },
       { key: 'output', label: t('Output'), align: 'num', render: (r) => (r.price ? money(r.price.output, ccy) : DASH), value: (r) => (r.price ? r.price.output : null) },
-      // Cached prompt tokens are billed at their own price; without one they are counted at the input price.
-      { key: 'cached', label: t('Cached input'), align: 'num', render: (r) => (r.price && isNum(r.price.cached) ? money(r.price.cached, ccy) : h('span', { class: 'text-muted', title: t('No cached-token price: cached tokens count at the input price') }, DASH)), value: (r) => (r.price ? r.price.cached : null) },
     ],
     rows,
   });

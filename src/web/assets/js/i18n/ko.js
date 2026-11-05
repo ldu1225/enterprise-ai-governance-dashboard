@@ -2290,6 +2290,19 @@ const KO = {
   "Turn on Metadata logging in Gemini Enterprise > Settings > AI developer tools > Compliance (off by default). From then on every Antigravity call writes {log} with the user and token counts, and usage, cost and caps appear here.": "Gemini Enterprise > 설정 > AI developer tools > 규정 준수에서 메타데이터 로깅을 켜세요(기본 꺼짐). 그때부터 Antigravity 호출마다 사용자와 토큰 수가 담긴 {log} 로그가 남고, 여기에 사용량·금액·한도가 표시됩니다.",
   "No cached-token price: cached tokens count at the input price": "캐시 토큰 단가 없음: 캐시 토큰을 입력 단가로 계산합니다",
   "{n} people · {month} ({tz})": "{n}명 · {month} ({tz})",
+  "Entered prices for {n} models": "모델 {n}개에 입력한 단가",
+  "other models: {inp} input · {out} output per 1M tokens": "그 밖의 모델: 100만 토큰당 입력 {inp} · 출력 {out}",
+  "cached {v}": "캐시 {v}",
+  "cached = input": "캐시 = 입력 단가",
+  "Allowed for the rest of the period by an administrator.": "관리자가 이번 기간 동안 허용함",
+  "Allowed for the rest of the period in the review queue.": "검토 대기열에서 이번 기간 동안 허용함",
+  "Suspended until the period reset.": "기간이 초기화될 때까지 정지했습니다.",
+  "Restored for the rest of the period.": "이번 기간 동안 복구했습니다.",
+  "Allowed for the rest of the period.": "이번 기간 동안 허용했습니다.",
+  "The user has no access that can be suspended.": "정지할 수 있는 접근 권한이 없습니다.",
+  "The user is not over the cap.": "한도를 넘지 않은 사용자입니다.",
+  "An allow exception applies to this user.": "이 사용자에게는 허용 예외 규칙이 적용됩니다.",
+  "The user cannot be allowed in its current state.": "현재 상태에서는 허용할 수 없는 사용자입니다.",
 };
 
 export default KO;

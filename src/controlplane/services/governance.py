@@ -1848,7 +1848,7 @@ def review(ctx):
                 for email in allowed:
                     _put_exception(state, _exception_item(
                         ctx, email, "allow", internal["periodEnd"],
-                        note or "Allowed for the rest of the period in the review queue."))
+                        note or "Allowed for the rest of the period by an administrator."))
             mutate_state(ctx, apply, required=bool(allowed))
         for uid, email in allow_only:
             results.append({"uid": uid, "email": email, "status": "applied",
