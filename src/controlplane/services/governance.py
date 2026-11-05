@@ -668,6 +668,9 @@ def agy_fields(src, alias="t"):
     }
 
 
+USAGE_COUNTERS = ("requests", "tokens", "promptTokens", "candidateTokens", "cachedTokens")
+
+
 class Usage:
     def __init__(self, source):
         self.source = source
@@ -693,6 +696,33 @@ class Usage:
         agg["promptTokens"] += prompt
         agg["candidateTokens"] += cand
         agg["cachedTokens"] = agg.get("cachedTokens", 0) + cached
+
+    def merge(self, other):
+        """Adds `other`, which must hold different log entries (Cloud Logging entries the sink table never received)."""
+        self.records += other.records
+        self.truncated = self.truncated or other.truncated
+        for email, rec in other.users.items():
+            u = self.user(email)
+            for key in USAGE_COUNTERS:
+                u[key] += rec.get(key) or 0
+            u["clients"] |= set(rec.get("clients") or ())
+            u["models"] |= set(rec.get("models") or ())
+            if rec.get("last") is not None and (u["last"] is None or rec["last"] > u["last"]):
+                u["last"] = rec["last"]
+            for model, agg in (rec.get("byModel") or {}).items():
+                Usage.add_model(u, model, agg.get("requests") or 0, agg.get("tokens") or 0,
+                                agg.get("promptTokens") or 0, agg.get("candidateTokens") or 0,
+                                agg.get("cachedTokens") or 0)
+        for mine, theirs in ((self.by_model, other.by_model), (self.by_client, other.by_client)):
+            for key, agg in theirs.items():
+                cur = mine.setdefault(key, {k: 0 for k in USAGE_COUNTERS})
+                for k in USAGE_COUNTERS:
+                    cur[k] = (cur.get(k) or 0) + (agg.get(k) or 0)
+        for (person, bucket), (req, tok) in other.daily.items():
+            if isinstance(bucket, str):
+                bucket = dt.date.fromisoformat(bucket[:10])
+            r0, t0 = self.daily.get((person, bucket), (0, 0))
+            self.daily[(person, bucket)] = (r0 + req, t0 + tok)
 
 
 def _bq_usage(ctx, src, start, end, email=None, rng=None):
@@ -806,22 +836,32 @@ def _logging_usage_project(ctx, project, log_id, start, end, email=None, rng=Non
     return entries_out, truncated, tz
 
 
-def _logging_usage(ctx, start, end, email=None, rng=None):
+def _logging_usage(ctx, start, end, email=None, rng=None, ranges=None):
+    """Usage from Cloud Logging. `ranges` ({project: (from, to)}) limits the read to those projects and time ranges."""
     ag = ctx.settings["governance"]["antigravity"]
     log_id = ag["inference_log"]
     if not config.LOG_NAME_RE.match(log_id):
         raise GcpError("invalid", message="invalid log id")
     projects = list(getattr(ctx, "projects", None) or [ctx.project])
+    if ranges is not None:
+        projects = [p for p in projects if p in ranges]
+    else:
+        ranges = {p: (start, end) for p in projects}
     usage = Usage("logging")
     tz = timeutil.get_zone(ctx.tz_name)
     all_entries = []
+    if not projects:
+        usage.ok = True
+        return usage
     if len(projects) <= 1:
-        proj = projects[0] if projects else ctx.project
-        entries, truncated, tz = _logging_usage_project(ctx, proj, log_id, start, end, email=email, rng=rng)
+        proj = projects[0]
+        lo, hi = ranges[proj]
+        entries, truncated, tz = _logging_usage_project(ctx, proj, log_id, lo, hi, email=email, rng=rng)
         all_entries.extend(entries)
         usage.truncated = truncated
     else:
-        tasks = {p: (lambda pr=p: _logging_usage_project(ctx, pr, log_id, start, end, email=email, rng=rng))
+        tasks = {p: (lambda pr=p: _logging_usage_project(ctx, pr, log_id, ranges[pr][0], ranges[pr][1],
+                                                         email=email, rng=rng))
                  for p in projects}
         res = ctx.run(tasks)
         for p in projects:
@@ -883,6 +923,67 @@ def _logging_usage(ctx, start, end, email=None, rng=None):
     return usage
 
 
+def _bq_first_seen(ctx, src, start, end):
+    """{project: earliest inference log entry in [start, end)} in the sink table(s), from logName."""
+    lname = expr("t", src.schema, "logName", cast="STRING")
+    if not lname:
+        return {}
+    params = {"w_start": start, "w_end": end,
+              "sfx_start": (start - dt.timedelta(days=1)).strftime("%Y%m%d"),
+              "sfx_end": (end + dt.timedelta(days=1)).strftime("%Y%m%d")}
+    sql = ("WITH %s\nSELECT REGEXP_EXTRACT(%s, r'^projects/([^/]+)/') AS project, MIN(%s) AS first_ts FROM s t "
+           "GROUP BY project" % (src.cte("s", start="w_start", end="w_end"), lname, agy_fields(src)["ts"]))
+    return {r["project"]: r["first_ts"] for r in ctx.query(sql, params, "antigravity")
+            if r.get("project") and r.get("first_ts") is not None}
+
+
+def logging_gaps(ctx, src, start, end):
+    """{project: (from, to)}: the parts of [start, end) whose inference logs exist only in Cloud Logging.
+
+    Log Router copies only entries received after a sink was created, and creates the table with the first one. So a
+    project whose sink table was created after `start` has its earlier entries only in Cloud Logging (for example
+    Metadata logging was turned on before the dashboard was installed), and a scanned project without a sink table
+    has all of them there. Empty when every sink table predates `start` (the normal case after the first period)."""
+    projects = list(getattr(ctx, "projects", None) or [ctx.project])
+    created = {s.project: getattr(s, "created", None) for s in (getattr(src, "sources", None) or [src])}
+    gaps, late = {}, []
+    for p in projects:
+        if p not in created:
+            gaps[p] = (start, end)
+        elif created[p] is not None and created[p] > start:
+            late.append(p)
+    if late:
+        first = _bq_first_seen(ctx, src, start, end)
+        for p in late:
+            stop = min(x for x in (first.get(p), created[p], end) if x is not None)
+            if stop > start:
+                gaps[p] = (start, stop)
+    return gaps
+
+
+def _add_logging_gaps(ctx, src, usage, start, end, email=None, rng=None, log_label=None):
+    """Adds Cloud Logging entries the sink table never received (see logging_gaps). Never raises."""
+    try:
+        gaps = logging_gaps(ctx, src, start, end)
+    except GcpError as err:
+        ctx.warn_error(src.label, err, "The first entries of the Antigravity inference log table")
+        return
+    if not gaps:
+        return
+    key = ("agy_logging_gap", tuple(sorted((p, iso(a), iso(b)) for p, (a, b) in gaps.items())), email or "", rng)
+    try:
+        extra, _ = ctx.app.cache.get_or_compute(
+            key, 300, lambda: _logging_usage(ctx, start, end, email=email, rng=rng, ranges=gaps))
+    except GcpError as err:
+        ctx.warn_error(log_label, err, "Cloud Logging inference logs older than the sink table")
+        return
+    if extra.records:
+        ctx.add_source(log_label)
+    if extra.truncated:
+        ctx.warn(log_label, "truncated", "Inference log entries were truncated at max_log_entries.")
+    usage.merge(extra)
+
+
 def antigravity_usage(ctx, start, end, email=None, rng=None):
     """Returns a Usage. Never raises for upstream failures (usage.ok=False + warning)."""
     ag = ctx.settings["governance"]["antigravity"]
@@ -896,11 +997,13 @@ def antigravity_usage(ctx, start, end, email=None, rng=None):
         try:
             usage = _bq_usage(ctx, src, start, end, email=email, rng=rng)
             ctx.add_source(label)
-            return usage
         except GcpError as err:
             ctx.warn_error(label, err, "The Antigravity inference log table")
             usage = Usage("bigquery")
             return usage
+        if mode == "auto":
+            _add_logging_gaps(ctx, src, usage, start, end, email=email, rng=rng, log_label=log_label)
+        return usage
     if mode == "bigquery":
         return Usage("unavailable")
     projects = tuple(getattr(ctx, "projects", None) or [ctx.project])
@@ -917,6 +1020,55 @@ def antigravity_usage(ctx, start, end, email=None, rng=None):
     if usage.truncated:
         ctx.warn(log_label, "truncated", "Inference log entries were truncated at max_log_entries.")
     return usage
+
+
+TELEMETRY_LOOKBACK = dt.timedelta(days=30)  # Cloud Logging keeps _Default entries for 30 days by default
+
+
+def telemetry_seen(ctx, usage, now):
+    """True when an Antigravity inference log entry exists in the last 30 days.
+
+    The cap window alone is not enough: right after every reset it is empty although Metadata logging is on, and the
+    page would tell the administrator to turn on a setting that is already on."""
+    if not usage.ok:
+        return False
+    if usage.records > 0:
+        return True
+    ag = ctx.settings["governance"]["antigravity"]
+    mode = ag.get("usage_source", "auto")
+    log_id = ag["inference_log"]
+    projects = tuple(getattr(ctx, "projects", None) or [ctx.project])
+
+    def probe():
+        start, end = now - TELEMETRY_LOOKBACK, now + dt.timedelta(minutes=5)
+        if mode in ("auto", "bigquery"):
+            src = ctx.audit_source(AGY_SINK, optional=True)
+            if src is not None:
+                params = {"w_start": start, "w_end": end,
+                          "sfx_start": (start - dt.timedelta(days=1)).strftime("%Y%m%d"),
+                          "sfx_end": (end + dt.timedelta(days=1)).strftime("%Y%m%d")}
+                rows = ctx.query("WITH %s\nSELECT COUNT(*) AS n FROM (SELECT 1 FROM s LIMIT 1)"
+                                 % src.cte("s", start="w_start", end="w_end"), params, "antigravity")
+                if rows and to_int(rows[0].get("n")):
+                    return True
+        if mode == "bigquery" or not config.LOG_NAME_RE.match(log_id):
+            return False
+        for proj in projects:
+            body = {"resourceNames": ["projects/%s" % proj], "orderBy": "timestamp desc", "pageSize": 1,
+                    "filter": 'logName="projects/%s/logs/%s" AND timestamp>="%s"' % (proj, log_id, iso(start))}
+            try:
+                data = ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body=body, timeout=30)
+            except (GcpError, ValueError):
+                continue
+            if (data or {}).get("entries"):
+                return True
+        return False
+
+    try:
+        seen, _ = ctx.app.cache.get_or_compute(("agy_telemetry_seen", projects, mode), 600, probe)
+    except (GcpError, ValueError):
+        return False  # a failed probe must not break the status page; the usage notices already say what failed
+    return bool(seen)
 
 
 # ---------------------------------------------------------------------------
@@ -1199,7 +1351,7 @@ def compute_status(ctx, period, window, token_cap, request_cap, cost_cap=None, m
                         "scheduler": scheduler_status(ctx, gstate, now),
                         "durable": store.governance_durable() if store is not None else None},
         "prerequisites": {"markerRoles": markers, "permissions": perms,
-                          "telemetryDetected": bool(usage.ok and usage.records > 0),
+                          "telemetryDetected": telemetry_seen(ctx, usage, now),
                           "inferenceLog": urllib.parse.unquote(ag.get("inference_log") or "")},
     }
     internal = {"policy": policy, "readable": readable, "cfg": cfg, "usage": usage, "idx": idx, "now": now,
