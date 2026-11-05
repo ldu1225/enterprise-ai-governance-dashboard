@@ -220,7 +220,7 @@ function renderStatus(ctx, body, s) {
   if (usageUnavailable) {
     body.append(banner({ tone: 'warning', title: t('Antigravity usage could not be read'), text: t('The inference log query failed. Grant the service identity roles/logging.viewer (or read access to the BigQuery sink table) and check the data source notices above.') }));
   } else if (prereq.telemetryDetected === false) {
-    body.append(banner({ tone: 'info', title: t('No Antigravity token usage logs in this project'), text: t('Token usage appears here when Antigravity for organizations writes its inference log ({log}) to this project.', { log: prereq.inferenceLog || t('set in Settings') }) }));
+    body.append(banner({ tone: 'info', title: t('No Antigravity token usage logs in this project'), text: t('Turn on Metadata logging in Gemini Enterprise > Settings > AI developer tools > Compliance (off by default). From then on every Antigravity call writes {log} with the user and token counts, and usage, cost and caps appear here.', { log: prereq.inferenceLog || t('set in Settings') }) }));
   }
   if (enforcement.durable === false) {
     body.append(banner({ tone: 'warning', title: t('Exception rules are not stored durably'), text: t('Settings are kept in memory on this deployment, so exception rules and suspension records are lost when the service restarts. Configure a settings bucket (SETTINGS_BUCKET).') }));

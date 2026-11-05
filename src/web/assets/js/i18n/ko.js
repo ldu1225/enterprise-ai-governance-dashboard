@@ -2288,6 +2288,7 @@ const KO = {
   "Empty uses the workspace time zone": "비워 두면 워크스페이스 시간대를 사용합니다",
   "Antigravity credit per user and month (USD)": "1인당 월 Antigravity 크레딧 (USD)",
   "Gemini Enterprise Standard 10, Plus 15. Used by the credit-based cap and the monthly usage report.": "Gemini Enterprise Standard 10, Plus 15. 크레딧 기준 한도와 월간 사용 리포트에 쓰입니다.",
+  "Turn on Metadata logging in Gemini Enterprise > Settings > AI developer tools > Compliance (off by default). From then on every Antigravity call writes {log} with the user and token counts, and usage, cost and caps appear here.": "Gemini Enterprise > 설정 > AI developer tools > 규정 준수에서 메타데이터 로깅을 켜세요(기본 꺼짐). 그때부터 Antigravity 호출마다 사용자와 토큰 수가 담긴 {log} 로그가 남고, 여기에 사용량·금액·한도가 표시됩니다.",
 };
 
 export default KO;

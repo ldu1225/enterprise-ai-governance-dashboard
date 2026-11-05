@@ -465,7 +465,7 @@ Data Access 로그는 양이 많을 수 있고 Cloud Logging 수집 비용이 �
 
 ### 6.5 Antigravity 추론 로그
 
-Antigravity 사용자별 토큰 사용량은 Antigravity for organizations가 프로젝트에 기록하는 `businessaicode.googleapis.com/inference_response` 로그에서 읽습니다. **이 로그는 Gemini Enterprise > 설정 > AI developer tools > 규정 준수의 메타데이터 로깅(Metadata logging)을 켜야 기록됩니다. 기본값은 꺼짐입니다**([공식 문서](https://cloud.google.com/gemini/enterprise/docs/ai-developer-tools-track-token-usage)). 프롬프트·응답 로깅은 켤 필요가 없습니다. 배포 요약이 로그 유무를 점검해 알려 줍니다. BigQuery 싱크 테이블이 있으면 BigQuery를, 없으면 Cloud Logging API를 씁니다(`usage_source: auto`). 사용자는 로그의 `labels.user_id`(IAM 주체 형식, 예: `user:alice@example.com`)에서 `user:`를 뺀 이메일로 집계해 프로젝트 IAM의 `user:` 바인딩과 맞추며, 서비스 계정 등 사용자가 아닌 주체는 사용자 목록과 한도에서 제외합니다. 코딩 에이전트가 사용자 자격 증명으로 호출한 Google Cloud API 작업은 Antigravity 통제 화면의 **클라우드에서 에이전트가 실행한 작업**에 감사 로그 기준으로 표시됩니다.
+Antigravity 사용자별 토큰 사용량은 Antigravity for organizations가 프로젝트에 기록하는 `businessaicode.googleapis.com/inference_response` 로그에서 읽습니다. **이 로그는 Gemini Enterprise > 설정 > AI developer tools > 규정 준수의 메타데이터 로깅(Metadata logging)을 켜야 기록됩니다. 기본값은 꺼짐입니다**([공식 문서](https://cloud.google.com/gemini/enterprise/docs/ai-developer-tools-track-token-usage)). 프롬프트·응답 로깅은 켤 필요가 없습니다. 배포 요약이 로그 유무를 점검해 알려 줍니다. 로그 싱크가 만들어진 뒤의 기록부터 BigQuery에 쌓이고(만료 없음), 그 전 기록은 Cloud Logging에 기본 30일까지만 남습니다. 월 정산은 설치 이후 기간을 기준으로 하세요. BigQuery 싱크 테이블이 있으면 BigQuery를, 없으면 Cloud Logging API를 씁니다(`usage_source: auto`). 사용자는 로그의 `labels.user_id`(IAM 주체 형식, 예: `user:alice@example.com`)에서 `user:`를 뺀 이메일로 집계해 프로젝트 IAM의 `user:` 바인딩과 맞추며, 서비스 계정 등 사용자가 아닌 주체는 사용자 목록과 한도에서 제외합니다. 코딩 에이전트가 사용자 자격 증명으로 호출한 Google Cloud API 작업은 Antigravity 통제 화면의 **클라우드에서 에이전트가 실행한 작업**에 감사 로그 기준으로 표시됩니다.
 
 ### 6.6 런타임 서비스 계정 권한
 
