@@ -261,6 +261,19 @@ if [[ "$PREPARE_ONLY" == "1" ]]; then
 fi
 
 # Save per-project env snapshots (git-ignored via /*.env) so re-runs or customizations are effortless.
+# Opt-outs given on this run are saved too, so a later scripts/deploy.sh --project PROJECT_ID keeps them.
+SAVE_DATA_ACCESS="true"
+SAVE_LOG_PROMPTS="true"
+SAVE_GOVERNANCE="true"
+for _xa in ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}; do
+  case "$_xa" in
+    --data-access-logs) SAVE_DATA_ACCESS="true" ;;
+    --no-data-access-logs) SAVE_DATA_ACCESS="false" ;;
+    --log-prompts) SAVE_LOG_PROMPTS="true" ;;
+    --no-log-prompts) SAVE_LOG_PROMPTS="false" ;;
+    --read-only) SAVE_GOVERNANCE="false" ;;
+  esac
+done
 if [[ "$DRY_RUN" != "1" || "${ACP_SAVE_ENV_ON_DRY_RUN:-0}" == "1" ]]; then
   IFS=',' read -r -a SAVE_PROJECTS <<<"$TARGET_PROJECTS"
   for raw_pid in "${SAVE_PROJECTS[@]}"; do
@@ -286,10 +299,10 @@ WORKSPACE_TIMEZONE="Asia/Seoul"
 ACCESS_MODE="google"
 ADMIN_EMAILS="${CLI_ADMINS}"
 ALLOWED_USERS="${CLI_VIEWERS}"
-ENABLE_DATA_ACCESS_LOGS="true"
+ENABLE_DATA_ACCESS_LOGS="${SAVE_DATA_ACCESS}"
 ENABLE_GE_OBSERVABILITY="true"
-GE_PROMPT_LOGGING="true"
-ENABLE_GOVERNANCE_ACTIONS="true"
+GE_PROMPT_LOGGING="${SAVE_LOG_PROMPTS}"
+ENABLE_GOVERNANCE_ACTIONS="${SAVE_GOVERNANCE}"
 EOF
   done
 fi

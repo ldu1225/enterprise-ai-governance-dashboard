@@ -288,7 +288,7 @@ bash <(curl -fsSL https://github.com/ldu1225/ai-control-plane/raw/main/scripts/i
 | `DATASET_LOCATION` | `REGION` | Location of newly created BigQuery audit datasets (aligned across hub and linked projects so `UNION ALL` queries succeed) |
 | `ENABLE_DATA_ACCESS_LOGS` | `true` | Turns on Data Access audit logs across AI services (`--no-data-access-logs` sets `false`) |
 | `ENABLE_GE_OBSERVABILITY` | `true` | Turns on usage logs (observability) for every Gemini Enterprise app in `DISCOVERY_ENGINE_LOCATIONS`. Needs Owner or Gemini Enterprise Admin; without it, only a warning is printed. |
-| `GE_PROMPT_LOGGING` | `true` | Turns on `sensitiveLoggingEnabled` so user identities (`userIamPrincipal`), prompt/response text and uploaded file names are recorded instead of `<elided>`. |
+| `GE_PROMPT_LOGGING` | `true` | Turns on `sensitiveLoggingEnabled` so user identities (`userIamPrincipal`), prompt/response text and uploaded file names are recorded instead of `<elided>` (`--no-log-prompts` sets `false`). |
 | `BILLING_PROJECT_ID` | Empty | Project that holds the billing export (if empty, auto-detected or `PROJECT_ID`) |
 | `BILLING_DATASET` | Empty | Billing export dataset. Example: `billing_detailed_usage` |
 | `BILLING_TABLE` | Empty | `gcp_billing_export_resource_v1_XXXXXX_XXXXXX_XXXXXX` |
@@ -470,7 +470,7 @@ When a billing export is configured, Cost & FinOps, cost per model, agent runtim
 
 ### 6.5 Antigravity inference logs
 
-Antigravity token usage per user is read from the `businessaicode.googleapis.com/inference_response` log that Antigravity for organizations writes to the project. If a BigQuery sink table exists, BigQuery is used. Otherwise, the Cloud Logging API is used (`usage_source: auto`). Google Cloud API calls that coding agents make with user credentials are shown under **Agent activity in your cloud** on the Antigravity Controls page, based on audit logs.
+Antigravity token usage per user is read from the `businessaicode.googleapis.com/inference_response` log that Antigravity for organizations writes to the project. If a BigQuery sink table exists, BigQuery is used. Otherwise, the Cloud Logging API is used (`usage_source: auto`). Users are counted by the email in the log's `labels.user_id` (an IAM principal such as `user:alice@example.com`, with `user:` removed), so they match the project's `user:` IAM bindings; service accounts and other non-user principals are left out of the user list and the caps. Google Cloud API calls that coding agents make with user credentials are shown under **Agent activity in your cloud** on the Antigravity Controls page, based on audit logs.
 
 ### 6.6 Runtime service account permissions
 
@@ -542,7 +542,7 @@ Shows verdicts over time, matched filters (prompt injection, sensitive data and 
 
 ### 7.7 Models & Tokens
 
-- Models are discovered automatically from billing SKUs, Cloud Monitoring `model_user_id` and Antigravity `model_id`. The SKU description is searched for a model family word (Gemini, Claude, Llama and others), and qualifiers such as region, modality, input/output and context tier are removed to group the SKUs under one key (for example, `gemini-3.8-flash`). The Agent Platform format (`Gemini 3.8 Flash Global Text Input`), the Gemini API format and the Monitoring model ID are merged into the same model.
+- Models are discovered automatically from billing SKUs, Cloud Monitoring `model_user_id` and the `model` label of Antigravity inference logs (`model_id` in older entries). The SKU description is searched for a model family word (Gemini, Claude, Llama and others), and qualifiers such as region, modality, input/output and context tier are removed to group the SKUs under one key (for example, `gemini-3.8-flash`). The Agent Platform format (`Gemini 3.8 Flash Global Text Input`), the Gemini API format and the Monitoring model ID are merged into the same model.
 - Tokens per model are based on Cloud Monitoring `publisher/online_serving/token_count` (Agent Platform), plus billed Gemini API tokens that Monitoring does not capture. For models without Monitoring metrics, token usage from billing SKUs is used. Invocations and error rate are calculated from `model_invocation_count`.
 - When a product re-bills model usage under its own SKUs, that usage is shown separately in the "Usage by product" card. The same tokens are also billed to the underlying model, so they are not added to the model token total.
 - When a new model such as Gemini 4 Carbon or Gemini 4 Argon is discovered for the first time, a "new models detected" notice appears. With `auto_enable_new_models: true`, the model is tracked immediately. With `false`, it is left out of totals until an administrator turns it on.
@@ -868,7 +868,8 @@ bq update --time_partitioning_expiration 10368000 PROJECT_ID:ge_analytics.modela
 | Only the Gemini Enterprise and Model Armor pages are empty | The filter of a sink created by `deploy.sh` before v2.1.0 ([6.1](#61-audit-log-sink-bigquery)). Run `deploy.sh` again with `CREATE_LOG_SINK=true`, or run `scripts/prepare.sh`; the logs arrive from then on. |
 | Warning that Gemini Enterprise usage logs could not be turned on | The running account needs Owner or Gemini Enterprise Admin (`roles/discoveryengine.agentspaceAdmin`). You can also turn them on in the console ([6.3](#63-gemini-enterprise-logs)). |
 | Tokens by model are empty | `roles/monitoring.viewer`, and whether token SKUs exist in the billing export |
-| License seats are empty or too low | `roles/discoveryengine.viewer`, and whether every location your subscriptions are distributed to is in `DISCOVERY_ENGINE_LOCATIONS` (leave it empty in `deploy.env` and run `scripts/deploy.sh` again to detect them) |
+| License seats are empty or too low | `roles/discoveryengine.viewer` and the license reader custom role `CustomAiControlPlaneLicenseReader` (in the primary and every linked project), and whether every location your subscriptions are distributed to is in `DISCOVERY_ENGINE_LOCATIONS` (leave it empty in `deploy.env` and run `scripts/deploy.sh` again to detect them) |
+| Access denied on `discoveryengine.*` (licenseConfigs, userLicenses, engines) or on the `user_activity` table | The runtime service account has no access to the project where Gemini Enterprise runs, usually because the dashboard was installed into another project. Install into the Gemini Enterprise project or link it with `--link-projects`; for a dashboard that is already installed, run the grant commands in [14.5](#145-when-gemini-enterprise-lives-in-another-project). |
 | 0 Antigravity users | Whether the `inference_response` log exists in the project (Antigravity for organizations). Agents in a personal setup do not write this log. |
 | All Antigravity states are `UNKNOWN` | The `resourcemanager.projects.getIamPolicy` permission (`roles/iam.securityReviewer`) |
 | Suspend/restore buttons are refused | Whether you redeployed with `ENABLE_GOVERNANCE_ACTIONS=true`, whether the marker roles exist, and the gate results |
@@ -905,6 +906,46 @@ Before creating anything (step 0/8), `deploy.sh` and `install.sh` read the proje
 
 Use `--skip-preflight-blockers` only when you are sure a finding is wrong.
 
+### 14.5 When Gemini Enterprise lives in another project
+
+If the dashboard was installed into a new project while Gemini Enterprise runs in an existing one, the runtime service account has no access to that project: the Gemini Enterprise pages stay empty and show access-denied notices for `discoveryengine.*` and `user_activity`. The final deployment summary then warns `No Gemini Enterprise app or seats found`.
+
+- **Recommended: install into the Gemini Enterprise project itself.** Antigravity governance (suspending and restoring over-cap users, individual allow and block), the marker roles and all IAM actions act on the primary project's IAM policy, and the Antigravity users' access role (`roles/discoveryengine.agentspaceUser`) lives in the Gemini Enterprise project.
+
+  ```bash
+  scripts/deploy.sh --project GE_PROJECT_ID
+  ```
+
+- **Alternative: link it read-only.** Keep the current project as the primary project and link the Gemini Enterprise project with `--link-projects` to see its usage, license seats and logs. Controls still act on the primary project only. The deploying account needs Owner on the Gemini Enterprise project.
+
+  ```bash
+  scripts/deploy.sh --project HUB_PROJECT_ID --link-projects GE_PROJECT_ID
+  ```
+
+> [!IMPORTANT]
+> By default the installer turns on observability (usage logs) **and prompt/response logging** (`sensitiveLoggingEnabled`) for every Gemini Enterprise app in the primary and linked projects, and enables Data Access audit logs. For a Gemini Enterprise project in production, get the customer's consent first, or run with `--no-log-prompts` and `--no-data-access-logs`.
+
+To add only the permissions to a dashboard that is already installed, an Owner of the Gemini Enterprise project runs the following (the runtime service account defaults to `ai-control-plane-sa`):
+
+```bash
+GE=GE_PROJECT_ID; HUB=HUB_PROJECT_ID
+SA="serviceAccount:ai-control-plane-sa@${HUB}.iam.gserviceaccount.com"
+# Read-only license seat reader (roles/discoveryengine.viewer has neither licenseConfigs.list nor listUserLicenses).
+# If the role already exists, use update instead of create.
+gcloud iam roles create CustomAiControlPlaneLicenseReader --project "$GE" \
+  --title "AI Control Plane License Reader" --stage GA \
+  --permissions discoveryengine.licenseConfigs.get,discoveryengine.licenseConfigs.list,discoveryengine.userStores.get,discoveryengine.userStores.listUserLicenses
+gcloud projects add-iam-policy-binding "$GE" --member "$SA" \
+  --role "projects/${GE}/roles/CustomAiControlPlaneLicenseReader" --condition=None
+for role in roles/discoveryengine.viewer roles/bigquery.dataViewer roles/bigquery.jobUser roles/bigquery.user \
+    roles/logging.viewer roles/logging.privateLogViewer roles/logging.configWriter roles/monitoring.viewer \
+    roles/aiplatform.viewer roles/iam.securityReviewer roles/modelarmor.viewer roles/serviceusage.serviceUsageConsumer; do
+  gcloud projects add-iam-policy-binding "$GE" --member "$SA" --role "$role" --condition=None
+done
+```
+
+Then add the Gemini Enterprise project under **Settings > Workspace and data sources > Additional projects to scan**. If that project has no audit log sink (`ge_analytics`) yet, create it with `scripts/prepare.sh --project GE_PROJECT_ID` (it takes the same `--no-log-prompts` and `--no-data-access-logs` options).
+
 ## 15. Removal
 
 ```bash
@@ -912,7 +953,7 @@ scripts/teardown.sh --project PROJECT_ID                 # deletes Cloud Run ser
 scripts/teardown.sh --project PROJECT_ID --delete-data   # also deletes the settings bucket and the Log Router sink (add --dry-run to preview first)
 ```
 
-If `deploy.<PROJECT_ID>.env` contains `SCAN_PROJECTS` (or you pass `--link-projects PROJ_B,PROJ_C`), `teardown.sh` also removes the runtime service account's cross-project IAM bindings from those linked projects. The BigQuery audit log dataset, the Artifact Registry repository and the Data Access audit log settings are not deleted automatically; the script prints the exact commands to delete them if desired. The observability setting of Gemini Enterprise apps and any Antigravity marker roles are also kept so suspended users are not orphaned; restore any suspended users on the Antigravity Controls page before removal.
+If `deploy.<PROJECT_ID>.env` contains `SCAN_PROJECTS` (or you pass `--link-projects PROJ_B,PROJ_C`), `teardown.sh` also removes the runtime service account's cross-project IAM bindings from those linked projects. The BigQuery audit log dataset, the Artifact Registry repository and the Data Access audit log settings are not deleted automatically; the script prints the exact commands to delete them if desired. The observability setting of Gemini Enterprise apps and any Antigravity marker roles are also kept so suspended users are not orphaned; restore any suspended users on the Antigravity Controls page before removal. The license reader custom role (`CustomAiControlPlaneLicenseReader`) loses its bindings in the primary and linked projects but the role itself is kept, because another dashboard in the same project may use it; the script prints the delete commands.
 
 ---
 
