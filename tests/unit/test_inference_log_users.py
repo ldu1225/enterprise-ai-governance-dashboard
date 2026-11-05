@@ -140,7 +140,7 @@ class LoggingPathTest(unittest.TestCase):
         ctx = LoggingCtx([OFFICIAL_SAMPLE])
         gov._logging_usage_project(ctx, support.PROJECT, LOG_ID, START, END,  # pylint: disable=protected-access
                                    email="user@example.com")
-        self.assertIn('(labels.user_id="user:user@example.com" OR labels.user_id="user@example.com")',
+        self.assertIn('labels.user_id=~"(?i)^(user:)?user@example[.]com$"',
                       ctx.bodies[0]["filter"])
         usage = gov._logging_usage(LoggingCtx([OFFICIAL_SAMPLE]), START, END,  # pylint: disable=protected-access
                                    email="user@example.com")

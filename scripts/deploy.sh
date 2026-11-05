@@ -229,9 +229,11 @@ ENABLE_GOVERNANCE_ACTIONS="${ENABLE_GOVERNANCE_ACTIONS:-true}"
 # Antigravity cap enforcement runs. They restore suspended users when a settlement period resets (in every
 # enforcement mode) and, in automatic mode only, suspend users over their cap. On by default so nobody stays
 # suspended past a reset; "off" (or --no-enforcement-schedule) leaves it to "Run enforcement now" in the dashboard.
+# An empty value (older deploy.env files had ENFORCEMENT_SCHEDULE="") keeps the default.
 ENFORCEMENT_SCHEDULE_EXPLICIT=0
-[[ -n "${ENFORCEMENT_SCHEDULE+x}" ]] && ENFORCEMENT_SCHEDULE_EXPLICIT=1
-ENFORCEMENT_SCHEDULE="$(trim_ws "${ENFORCEMENT_SCHEDULE-*/15 * * * *}")"
+[[ -n "$(trim_ws "${ENFORCEMENT_SCHEDULE:-}")" ]] && ENFORCEMENT_SCHEDULE_EXPLICIT=1
+ENFORCEMENT_SCHEDULE="$(trim_ws "${ENFORCEMENT_SCHEDULE:-}")"
+[[ -n "$ENFORCEMENT_SCHEDULE" ]] || ENFORCEMENT_SCHEDULE="*/15 * * * *"
 case "$ENFORCEMENT_SCHEDULE" in off|none) ENFORCEMENT_SCHEDULE="" ;; esac
 # Scheduler tick for scheduled work: the daily official price and exchange-rate check (at pricing.sync_time, default
 # 00:00 in the workspace timezone; a setting, not a cron here) and the telemetry route budget guard. "off" disables it.
@@ -1099,8 +1101,13 @@ if [[ -n "$ENFORCEMENT_SCHEDULE" && "$EFFECTIVE_ACCESS_MODE" != "iap" ]]; then
     run retry gcloud scheduler jobs create http "$JOB" "${JOB_ARGS[@]}" --headers Content-Type=application/json >/dev/null
   fi
   info "job ${JOB}: ${ENFORCEMENT_SCHEDULE} (${WORKSPACE_TIMEZONE}) -> ${ENFORCE_URL}"
+  # When the organization requires IAM invoker checks (run.managed.requireInvokerIam) the service is not public and
+  # Cloud Run would reject the scheduler's OIDC call before the app sees it; restores would then never run.
+  run retry gcloud run services add-iam-policy-binding "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" \
+    --member "serviceAccount:${SCHEDULER_SA}" --role roles/run.invoker --condition=None --quiet >/dev/null \
+    || warn "could not grant roles/run.invoker on ${SERVICE_NAME} to ${SCHEDULER_SA}; if the service requires IAM invoker checks, scheduled enforcement (and automatic restores) will fail"
 else
-  info "enforcement schedule: on-demand from the dashboard (ENFORCEMENT_SCHEDULE empty)"
+  info "enforcement schedule: on-demand from the dashboard (ENFORCEMENT_SCHEDULE off)"
 fi
 
 # Maintenance tick: daily official price/FX check at pricing.sync_time (Settings > Data collection and cost) and the
@@ -1116,6 +1123,8 @@ if [[ "$MAINTENANCE_SCHEDULE" != "off" && "$EFFECTIVE_ACCESS_MODE" != "iap" ]]; 
       --time-zone "Etc/UTC" --uri "$MAINT_URL" --http-method POST --message-body '{}'
       --oidc-service-account-email "$SA_EMAIL" --oidc-token-audience "$MAINT_URL"
       --attempt-deadline 600s --max-retry-attempts 1 --quiet)
+    gcloud run services add-iam-policy-binding "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" \
+      --member "serviceAccount:${SA_EMAIL}" --role roles/run.invoker --condition=None --quiet >/dev/null 2>&1 || true
     if gcloud scheduler jobs describe "$MAINT_JOB" --project "$PROJECT_ID" --location "$REGION" >/dev/null 2>&1; then
       run retry gcloud scheduler jobs update http "$MAINT_JOB" "${MAINT_ARGS[@]}" --update-headers Content-Type=application/json >/dev/null \
         && info "job ${MAINT_JOB}: ${MAINTENANCE_SCHEDULE} -> ${MAINT_URL}" \

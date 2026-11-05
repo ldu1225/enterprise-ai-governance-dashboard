@@ -299,7 +299,7 @@ bash <(curl -fsSL https://github.com/ldu1225/ai-control-plane/raw/main/scripts/i
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `ENABLE_GOVERNANCE_ACTIONS` | `true` | IAM 쓰기 역할 부여(`--read-only` 지정 시 `false`). 한도 초과 사용자 정지, 복원, 개별 허용/차단, 마커 역할 생성에 필요 |
-| `ENFORCEMENT_SCHEDULE` | 비어 있음 | 자동 집행 일정(cron). 예: `*/15 * * * *`. `ENABLE_GOVERNANCE_ACTIONS=true`와 `google` 또는 `google_oauth` 방식이 필요합니다. 정지된 사용자는 집행 실행에서 복원되므로, 일정이 없으면 기간이 초기화된 뒤 관리자가 집행을 실행해야 접근이 돌아옵니다. |
+| `ENFORCEMENT_SCHEDULE` | `*/15 * * * *` | Antigravity 한도 집행 일정(cron). 정지된 사용자는 집행 실행에서 복원되므로 기본으로 켜져 있습니다. `off`면 끕니다(그러면 기간이 초기화된 뒤 관리자가 집행을 실행해야 접근이 돌아옵니다). `--read-only`와 IAP 방식에서는 만들지 않습니다. |
 | `MAINTENANCE_SCHEDULE` | `0 * * * *` | 공식 단가·다중 통화 환율 일일 동기화(`PRICING_SYNC_TIME`, 기본 `00:00`) 및 텔레메트리 BigQuery 라우팅 일일 GiB 한도 점검·다음 날 자동 재개를 수행하는 Cloud Scheduler 일정(`off` 지정 시 생략) |
 | `PRICING_SYNC_TIME`, `PRICING_CURRENCY` | `00:00`, `KRW` | 공식 단가·환율 일일 자동 동기화 시각(`WORKSPACE_TIMEZONE` 기준) 및 결제 내보내기 미연결 시 기본 표시 통화 |
 
@@ -465,7 +465,7 @@ Data Access 로그는 양이 많을 수 있고 Cloud Logging 수집 비용이 �
 
 ### 6.5 Antigravity 추론 로그
 
-Antigravity 사용자별 토큰 사용량은 Antigravity for organizations가 프로젝트에 기록하는 `businessaicode.googleapis.com/inference_response` 로그에서 읽습니다. BigQuery 싱크 테이블이 있으면 BigQuery를, 없으면 Cloud Logging API를 씁니다(`usage_source: auto`). 사용자는 로그의 `labels.user_id`(IAM 주체 형식, 예: `user:alice@example.com`)에서 `user:`를 뺀 이메일로 집계해 프로젝트 IAM의 `user:` 바인딩과 맞추며, 서비스 계정 등 사용자가 아닌 주체는 사용자 목록과 한도에서 제외합니다. 코딩 에이전트가 사용자 자격 증명으로 호출한 Google Cloud API 작업은 Antigravity 통제 화면의 **클라우드에서 에이전트가 실행한 작업**에 감사 로그 기준으로 표시됩니다.
+Antigravity 사용자별 토큰 사용량은 Antigravity for organizations가 프로젝트에 기록하는 `businessaicode.googleapis.com/inference_response` 로그에서 읽습니다. **이 로그는 Gemini Enterprise > 설정 > AI developer tools > 규정 준수의 메타데이터 로깅(Metadata logging)을 켜야 기록됩니다. 기본값은 꺼짐입니다**([공식 문서](https://cloud.google.com/gemini/enterprise/docs/ai-developer-tools-track-token-usage)). 프롬프트·응답 로깅은 켤 필요가 없습니다. 배포 요약이 로그 유무를 점검해 알려 줍니다. BigQuery 싱크 테이블이 있으면 BigQuery를, 없으면 Cloud Logging API를 씁니다(`usage_source: auto`). 사용자는 로그의 `labels.user_id`(IAM 주체 형식, 예: `user:alice@example.com`)에서 `user:`를 뺀 이메일로 집계해 프로젝트 IAM의 `user:` 바인딩과 맞추며, 서비스 계정 등 사용자가 아닌 주체는 사용자 목록과 한도에서 제외합니다. 코딩 에이전트가 사용자 자격 증명으로 호출한 Google Cloud API 작업은 Antigravity 통제 화면의 **클라우드에서 에이전트가 실행한 작업**에 감사 로그 기준으로 표시됩니다.
 
 ### 6.6 런타임 서비스 계정 권한
 
@@ -589,12 +589,15 @@ flowchart TD
 
 ### 8.2 시작하기
 
-1. `ENABLE_GOVERNANCE_ACTIONS="true"`로 배포합니다. 자동 정지와 기간 종료 시 자동 복원을 쓰려면 `ENFORCEMENT_SCHEDULE="*/15 * * * *"`도 지정합니다.
-2. **Antigravity 통제 > 집행 사전 요구 사항**에서 마커 역할과 권한을 확인하고, 마커 역할이 없으면 **마커 역할 생성**을 누릅니다.
-3. **한도 정책 > 정책 편집**에서 정합니다.
-   - 1인당 비용 한도: `₩100만`, `₩200만`, `₩300만` 버튼 또는 직접 입력
+1. 기본 설치(`ENABLE_GOVERNANCE_ACTIONS="true"`)면 준비가 끝납니다. 설치가 다음을 자동으로 합니다.
+   - **마커 역할 생성**: Gemini Enterprise User 역할에서 `businessaicode.*`만 뺀 `CustomAntigravityCapBlocked`, `CustomAntigravityAdminBlocked`([공식 문서의 AI developer tools 제한용 커스텀 역할](https://cloud.google.com/gemini/enterprise/docs/ai-developer-tools-creating-custom-roles)과 같은 방식). 정지된 사용자는 Gemini Enterprise 앱은 계속 쓰고 Antigravity만 막힙니다.
+   - **집행 스케줄러**: 15분마다 집행 실행(`ENFORCEMENT_SCHEDULE` 기본값 `*/15 * * * *`). 정산 기간이 초기화되면 정지된 사용자를 **자동으로 복원**합니다(수동 검토 모드에서도). 끄려면 `--no-enforcement-schedule`, 주기를 바꾸려면 `--enforcement-schedule "CRON"`. IAP 접근 모드와 `--read-only`에서는 만들지 않습니다.
+   - 2시간 넘게 스케줄 실행이 없으면 화면에 **자동 집행이 멈췄습니다** 경고가 뜹니다.
+2. Gemini Enterprise 관리자가 **메타데이터 로깅**을 켭니다(6.5). 사용량은 그때부터 집계됩니다.
+3. **한도 정책 > 정책 편집**에서 정합니다. 설치 직후 한도는 모두 꺼져 있어(0) 누구도 한도를 넘지 않습니다.
+   - 1인당 비용 한도: 직접 입력 또는 **Antigravity 크레딧 기준으로 설정** 버튼(1인당 월 크레딧 ÷ 4: Standard 주 $2.50, Plus 주 $3.75. 모두 이 안에서 쓰면 크레딧 풀을 넘지 않아 초과 과금이 생기지 않습니다). 월 크레딧 금액은 설정 > 거버넌스 정책의 `1인당 월 Antigravity 크레딧`(기본 10)입니다.
    - 통화: 기본은 결제 계정 통화. `KRW`를 고르면 원화로 표시하고 비교합니다.
-   - 정산 기간: 일별, 주별, 월별, 최근 90일 / 창: 달력 기준(고정 초기화) 또는 이동 창 / 초기화 시간대(예: 매월 1일 00:00 Asia/Seoul)
+   - 정산 기간: 기본 **주별**. Gemini Enterprise는 Antigravity 크레딧을 프로젝트 첫 요청 시점부터 **7일 단위 공유 풀**로 집행하므로([공식 문서](https://cloud.google.com/gemini/enterprise/docs/quotas-and-pay-as-you-go-usage)) **주간 초기화 요일·초기화 시각**을 그 주기에 맞춥니다. 초기화 시간대는 비우면 워크스페이스 시간대입니다.
    - 토큰 한도, 요청 한도(0이면 꺼짐)
 4. 사람마다 금액을 다르게 주려면 **한도 대비 사용량** 표의 **비용 한도** 열에서 연필 버튼을 누릅니다(`기본값 사용`, `비용 한도 없음`, 프리셋, 직접 입력).
 5. 상단 **집행** 카드에서 **자동 정지** 또는 **수동 검토**를 고릅니다. 기본은 수동 검토입니다.
@@ -602,14 +605,15 @@ flowchart TD
 
 ### 8.3 추정 비용과 단가
 
-- 사용자별 비용 = 모델별로 입력(프롬프트) 토큰 x 입력 단가 + 나머지 토큰(응답, thinking) x 출력 단가.
+- 사용자별 비용 = 모델별로 (입력 토큰 − 캐시 토큰) x 입력 단가 + 캐시 토큰(`cachedContentTokenCount`) x 캐시 단가 + 나머지 토큰(응답, thinking) x 출력 단가. Antigravity 세션은 입력 대부분이 프롬프트 캐시에서 나오므로(공식 예시: 입력 70,825 중 69,079), 캐시 단가를 쓰지 않으면 금액이 크게 부풀려집니다. 캐시 단가를 모르는 모델은 입력 단가로 계산해 낮게 잡히지 않게 합니다. 캐시 쓰기 토큰은 로그에 따로 없어 입력으로 계산합니다.
 - 단가는 모델과 방향(입력/출력)별로 다음 순서로 찾습니다.
   1. **실제 청구 단가**: 최근 30일 결제 내보내기에서 해당 모델 표준 텍스트 토큰 SKU의 `SUM(cost) / SUM(usage.amount)`. 협상 가격이 반영되며 크레딧은 빼지 않습니다. batch, flex, priority, 캐시, 장문 컨텍스트, 튜닝, 오디오/이미지/비디오 같은 변형 SKU는 제외합니다.
   2. **Google 공개 가격표**: 청구 기록이 없는 모델은 Cloud Billing Catalog API(Agent Platform, Gemini API)의 공개 가격을 씁니다.
 - 통화가 다르면 Google이 가격표에 게시하는 환율로 환산합니다. 화면에 `1 USD = ₩1,359 (Google 환율, 날짜)`처럼 근거를 표시합니다.
 - 단가는 6시간 동안 캐시됩니다. 한도 정책 카드의 **이번 기간에 사용한 모델 단가** 표에 모델별 단가와 출처(청구 단가, Google 가격표, 단가 없음)가 표시됩니다.
 - 어느 쪽에서도 단가를 찾지 못한 모델은 "단가 없음"으로 표시되고 그 토큰은 비용에 들어가지 않습니다. 비용 한도만 켠 상태에서 비용을 계산할 수 없는 사용자는 한도 사용률이 0%가 아니라 `—`로 표시되고 정지되지 않습니다.
-- 결제 내보내기에는 사용자 정보가 없으므로 사람별 비용은 실제 청구액이 아니라 토큰 기반 추정치입니다. 화면에도 추정 비용으로 표시합니다.
+- 결제 내보내기에는 사용자 정보가 없으므로 사람별 비용은 실제 청구액이 아니라 토큰 기반 추정치입니다. 화면에도 추정 비용으로 표시합니다. 토큰 수 자체는 Google이 호출마다 기록한 실측값입니다.
+- **월간 사용 리포트**(Antigravity 통제 화면): 달을 고르면 사람별 요청 수, 입력·캐시·출력 토큰, 금액, 크레딧, 청구 금액(크레딧 차감 또는 전액)을 보여 주고 CSV로 내려받습니다(`GET /api/v1/governance/antigravity/billing-report?month=YYYY-MM`). 사내 정산(차지백)에 그대로 쓰는 용도이며, Google 청구서는 프로젝트 단위라는 점을 리포트에 명시합니다.
 - 계약 단가를 직접 넣고 싶은 조직은 설정 > 거버넌스 정책에서 토큰 단가를 `직접 입력`으로 바꾸거나 `config.yaml`의 `model_prices`를 씁니다(선택).
 
 ### 8.4 집행 모드
@@ -620,7 +624,8 @@ flowchart TD
 | 자동 정지 | 집행 실행마다 정지됩니다. | 정산 기간이 끝나면 자동 |
 
 - **집행 실행**은 **지금 집행 실행** 버튼 또는 Cloud Scheduler 작업(`ENFORCEMENT_SCHEDULE`)으로 일어납니다. 스케줄러 작업은 권한이 없는 전용 서비스 계정의 Google OIDC 토큰으로 `POST /api/v1/governance/antigravity/enforce`를 호출하고, 앱은 발급자, 대상(`PUBLIC_BASE_URL` + 경로), 이메일 검증, 허용 목록(`SCHEDULER_INVOKERS`)을 확인합니다. 인증 없는 호출과 다른 토큰은 401입니다.
-- 정지 = 접근 역할(`roles/discoveryengine.agentspaceUser`)을 한도 마커 역할(`CustomAntigravityCapBlocked`)로 바꾸는 하나의 etag 기반 `setIamPolicy`입니다. 정지 기록(시작, 종료 예정, 사유, 실행 주체)이 설정 버킷에 남고, 기간이 끝난 뒤 첫 집행 실행이 텔레메트리가 없어도 복원합니다. `ENFORCEMENT_SCHEDULE`이 있으면 한 주기 안에 복원되고, 없으면 초기화될 때마다 집행을 실행해야 합니다. 단, 새 기간 사용량이 이미 한도를 넘었으면 유지됩니다.
+- 정지 = 접근 역할(`roles/discoveryengine.agentspaceUser`)을 한도 마커 역할(`CustomAntigravityCapBlocked`)로 바꾸는 하나의 etag 기반 `setIamPolicy`입니다. 정지 기록(시작, 종료 예정, 사유, 실행 주체)이 설정 버킷에 남고, 기간이 끝난 뒤 첫 집행 실행이 텔레메트리가 없어도 복원합니다. 기본 스케줄(15분)이면 초기화 후 15분 안에 복원되고, 스케줄을 끈 경우에만 초기화될 때마다 집행을 실행해야 합니다. 단, 새 기간 사용량이 이미 한도를 넘었으면 유지됩니다.
+- **영구 정지는 없습니다.** 한도 정지는 항상 다음 초기화에 풀리고, 계속 막는 것은 관리자가 건 **항상 차단** 규칙뿐입니다. 대시보드를 삭제할 때도 `teardown.sh`가 한도로 정지된 사용자를 먼저 복원합니다(15장).
 
 ### 8.5 예외 규칙
 
@@ -945,7 +950,7 @@ scripts/teardown.sh --project PROJECT_ID                # 서비스, 스케줄�
 scripts/teardown.sh --project PROJECT_ID --delete-data  # 설정 버킷(화면 설정, 예외 규칙, 정지 기록, 위젯 배치)과 로그 싱크까지 삭제
 ```
 
-BigQuery 감사 로그 데이터셋, Artifact Registry 저장소, Data Access 감사 로그 설정은 자동으로 지우지 않고 삭제 명령만 안내합니다. Gemini Enterprise 앱의 관측 가능성(사용 로그) 설정도 그대로 두며, 필요하면 콘솔의 앱 > 구성 > 관측 가능성에서 끕니다. 마커 역할도 정지된 사용자가 아직 쓰고 있을 수 있어 남겨 두고 삭제 명령만 안내합니다. 라이선스 읽기 커스텀 역할(`CustomAiControlPlaneLicenseReader`)은 대표·연동 프로젝트의 바인딩만 지우고, 같은 프로젝트의 다른 대시보드가 쓸 수 있어 역할 자체는 남겨 두고 삭제 명령을 안내합니다. 대시보드가 정지한 사용자가 있다면 삭제 전에 Antigravity 통제 화면에서 복원합니다.
+BigQuery 감사 로그 데이터셋, Artifact Registry 저장소, Data Access 감사 로그 설정은 자동으로 지우지 않고 삭제 명령만 안내합니다. Gemini Enterprise 앱의 관측 가능성(사용 로그) 설정도 그대로 두며, 필요하면 콘솔의 앱 > 구성 > 관측 가능성에서 끕니다. **한도로 정지된 사용자는 삭제 전에 자동으로 복원합니다**(접근 역할을 먼저 다시 주고 마커 역할을 뺍니다). 관리자가 건 항상 차단은 유지하고 목록을 보여 주며, 함께 풀려면 `--restore-blocked-users`를 붙입니다. 마커 역할은 차단된 사용자가 아직 쓰고 있을 수 있어 남겨 두고 삭제 명령만 안내합니다. 라이선스 읽기 커스텀 역할(`CustomAiControlPlaneLicenseReader`)은 대표·연동 프로젝트의 바인딩만 지우고, 같은 프로젝트의 다른 대시보드가 쓸 수 있어 역할 자체는 남겨 두고 삭제 명령을 안내합니다.
 
 ---
 
