@@ -175,6 +175,51 @@ class MergedUsageTest(unittest.TestCase):
         self.assertEqual(a.daily, {("user@example.com", dt.date(2026, 10, 2)): (3, 30)})
 
 
+def real_sink_source():
+    """Schema of a real Log Router table of the Antigravity inference log (captured in a test project): the payload
+    column is named after the entry's @type and its field names are lower-cased."""
+    schema = TableSchema.from_dicts([
+        {"name": "logName", "type": "STRING"},
+        {"name": "jsonpayload_v1_inferenceresponselog", "type": "RECORD", "fields": [
+            {"name": "_type", "type": "STRING"},
+            {"name": "metadata", "type": "RECORD", "fields": [
+                {"name": name, "type": "STRING"}
+                for name in ("prompttokencount", "cachedcontenttokencount", "candidatestokencount",
+                             "totaltokencount")]}]},
+        {"name": "timestamp", "type": "TIMESTAMP"},
+        {"name": "receiveTimestamp", "type": "TIMESTAMP"},
+        {"name": "labels", "type": "RECORD", "fields": [
+            {"name": name, "type": "STRING"}
+            for name in ("request_id", "trajectory_id", "model", "model_provider", "client_name", "user_id")]},
+    ])
+    return Source(support.PROJECT, "audit", AGY_SINK, "table", AGY_SINK, schema, created=START)
+
+
+class RealSinkSchemaTest(unittest.TestCase):
+    """Reading jsonPayload.metadata only gave every call 0 tokens and US$0 once the sink table existed."""
+
+    def test_token_counts_come_from_the_typed_payload_column(self):
+        f = gov.agy_fields(real_sink_source())
+        col = "t.`jsonpayload_v1_inferenceresponselog`.`metadata`.`%s`"
+        self.assertEqual(f["total"], "SAFE_CAST(%s AS INT64)" % (col % "totaltokencount"))
+        self.assertEqual(f["prompt"], "SAFE_CAST(%s AS INT64)" % (col % "prompttokencount"))
+        self.assertEqual(f["candidates"], "SAFE_CAST(%s AS INT64)" % (col % "candidatestokencount"))
+        self.assertEqual(f["cached"], "SAFE_CAST(%s AS INT64)" % (col % "cachedcontenttokencount"))
+
+    def test_untyped_and_typed_payloads_are_both_read(self):
+        src = real_sink_source()
+        src.schema.tree.update(sink_source().schema.tree)  # entries without @type land in jsonPayload
+        f = gov.agy_fields(src)
+        self.assertTrue(f["total"].startswith("COALESCE(SAFE_CAST(t.`jsonpayload_v1_inferenceresponselog`"))
+        self.assertIn("t.`jsonPayload`.`metadata`.`totalTokenCount`", f["total"])
+
+    def test_usage_query_uses_the_typed_columns(self):
+        ctx = GapCtx(real_sink_source(), bq_rows=[bq_row(2)])
+        usage = gov._bq_usage(ctx, ctx.src, START, END)  # pylint: disable=protected-access
+        self.assertIn("`jsonpayload_v1_inferenceresponselog`.`metadata`.`totaltokencount`", ctx.queries[0])
+        self.assertEqual(usage.users["user@example.com"]["tokens"], 2 * 85040)
+
+
 class TelemetrySeenTest(unittest.TestCase):
     NOW = END - dt.timedelta(days=1)
 

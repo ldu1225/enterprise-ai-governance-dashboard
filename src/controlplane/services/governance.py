@@ -652,18 +652,37 @@ def usage_user(principal):
     return value
 
 
+AGY_PAYLOAD_COLUMN = "jsonpayload_v1_inferenceresponselog"
+
+
+def payload_paths(schema, path):
+    """`path` under every payload column of a Log Router table.
+
+    Log Router names the payload column of an entry whose jsonPayload carries an @type after that type, and lower-cases
+    the field names: Antigravity's InferenceResponseLog lands in jsonpayload_v1_inferenceresponselog.metadata.
+    prompttokencount, not jsonPayload.metadata.promptTokenCount (seen in a real sink table). Lookups are
+    case-insensitive, so the documented camelCase path finds the lower-cased columns."""
+    typed = sorted(node.name for name, node in ((schema.tree or {}).items() if schema else ())
+                   if name.startswith("jsonpayload_"))
+    typed.sort(key=lambda n: n.lower() != AGY_PAYLOAD_COLUMN)
+    return ["%s.%s" % (col, path) for col in typed] + ["jsonPayload.%s" % path]
+
+
 def agy_fields(src, alias="t"):
     s = src.schema
     user = expr(alias, s, "labels.user_id", cast="STRING")
+
+    def tokens(name):
+        return expr(alias, s, *payload_paths(s, "metadata.%s" % name), cast="INT64")
     return {
         "user": agy_user_sql(user) if user else None,
         "client": expr(alias, s, "labels.client_name", cast="STRING"),
         "model": expr(alias, s, "labels.model_id", "labels.model", cast="STRING"),
-        "total": expr(alias, s, "jsonPayload.metadata.totalTokenCount", cast="INT64"),
-        "prompt": expr(alias, s, "jsonPayload.metadata.promptTokenCount", cast="INT64"),
-        "candidates": expr(alias, s, "jsonPayload.metadata.candidatesTokenCount", cast="INT64"),
+        "total": tokens("totalTokenCount"),
+        "prompt": tokens("promptTokenCount"),
+        "candidates": tokens("candidatesTokenCount"),
         # Optional: the column exists only after the first call served from the prompt cache.
-        "cached": expr(alias, s, "jsonPayload.metadata.cachedContentTokenCount", cast="INT64"),
+        "cached": tokens("cachedContentTokenCount"),
         "ts": "%s.%s" % (alias, quote_ident(src.time_column())),
     }
 
