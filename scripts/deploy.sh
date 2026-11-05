@@ -24,7 +24,12 @@
 #   --service-name NAME     Cloud Run service name (default: ai-control-plane)
 #   --billing-account ID    Cloud Billing account ID to link if the project is unbilled
 #   --read-only             Skip IAM governance write roles (ENABLE_GOVERNANCE_ACTIONS=false)
+#   --enforcement-schedule CRON  Antigravity cap enforcement runs (default */15 * * * *: restores suspended
+#                           users at each period reset; suspends over-cap users only in automatic mode)
+#   --no-enforcement-schedule    No scheduled runs (enforce from the dashboard after every period reset)
 #   --no-data-access-logs   Skip enabling Data Access audit logs
+#   --no-log-prompts        Turn on Gemini Enterprise observability without prompt/response logging
+#   --dataset NAME / --dataset-location LOC / --ge-locations LIST   Audit dataset, its location, GE locations
 #   --vpc-network NAME      Send Cloud Run egress through this VPC (needed when run.allowedVPCEgress forces it)
 #   --vpc-subnet NAME       Subnet for --vpc-network (enable Private Google Access on it)
 #   --skip-preflight-blockers  Continue even when the organization policy preflight finds blockers
@@ -54,8 +59,13 @@ CLI_READ_ONLY=""
 CLI_DATA_ACCESS_LOGS=""
 CLI_PREPARE_LINKED=""
 CLI_SCAN_ALL=""
+CLI_ENFORCEMENT_SCHEDULE=""
+CLI_LOG_PROMPTS=""
+CLI_DATASET=""
+CLI_DATASET_LOCATION=""
+CLI_GE_LOCATIONS=""
 
-usage() { sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 need_arg() { [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || die "$1 needs a value"; }
 
 normalize_cli_args "$@"
@@ -75,8 +85,15 @@ while [[ $# -gt 0 ]]; do
     --service-name) need_arg "$@"; CLI_SERVICE_NAME="$2"; shift 2 ;;
     --billing-account) need_arg "$@"; CLI_BILLING_ACCOUNT="$2"; shift 2 ;;
     --read-only) CLI_READ_ONLY="1"; shift ;;
+    --enforcement-schedule) need_arg "$@"; CLI_ENFORCEMENT_SCHEDULE="$2"; shift 2 ;;
+    --no-enforcement-schedule) CLI_ENFORCEMENT_SCHEDULE="off"; shift ;;
     --data-access-logs) CLI_DATA_ACCESS_LOGS="true"; shift ;;
     --no-data-access-logs) CLI_DATA_ACCESS_LOGS="false"; shift ;;
+    --log-prompts) CLI_LOG_PROMPTS="true"; shift ;;
+    --no-log-prompts) CLI_LOG_PROMPTS="false"; shift ;;
+    --dataset) need_arg "$@"; CLI_DATASET="$2"; shift 2 ;;
+    --dataset-location) need_arg "$@"; CLI_DATASET_LOCATION="$2"; shift 2 ;;
+    --ge-locations) need_arg "$@"; CLI_GE_LOCATIONS="$2"; shift 2 ;;
     --prepare-linked-projects) CLI_PREPARE_LINKED="true"; shift ;;
     --no-prepare-linked-projects) CLI_PREPARE_LINKED="false"; shift ;;
     --vpc-network) need_arg "$@"; VPC_NETWORK="$2"; shift 2 ;;
@@ -154,6 +171,12 @@ SCAN_ALL_PROJECTS="${SCAN_ALL_PROJECTS:-${AUTO_DISCOVER_PROJECTS:-}}"
 [[ -n "$CLI_DATA_ACCESS_LOGS" ]] && ENABLE_DATA_ACCESS_LOGS="$CLI_DATA_ACCESS_LOGS"
 [[ -n "$CLI_PREPARE_LINKED" ]] && PREPARE_LINKED_PROJECTS="$CLI_PREPARE_LINKED"
 [[ -n "$CLI_SCAN_ALL" ]] && SCAN_ALL_PROJECTS="$CLI_SCAN_ALL"
+[[ -n "$CLI_ENFORCEMENT_SCHEDULE" ]] && ENFORCEMENT_SCHEDULE="$CLI_ENFORCEMENT_SCHEDULE"
+# Flags the one-command installer forwards (install.sh); the installer's env snapshot cannot override them.
+[[ -n "$CLI_LOG_PROMPTS" ]] && GE_PROMPT_LOGGING="$CLI_LOG_PROMPTS"
+[[ -n "$CLI_DATASET" ]] && AUDIT_DATASET="$CLI_DATASET"
+[[ -n "$CLI_DATASET_LOCATION" ]] && DATASET_LOCATION="$CLI_DATASET_LOCATION"
+[[ -n "$CLI_GE_LOCATIONS" ]] && DISCOVERY_ENGINE_LOCATIONS="$CLI_GE_LOCATIONS"
 
 for tool in gcloud bq python3; do command -v "$tool" >/dev/null || die "$tool is required"; done
 ACCOUNT="$(ensure_gcloud_auth)"
@@ -202,7 +225,13 @@ BILLING_ACCOUNT_ID="$(trim_ws "${BILLING_ACCOUNT_ID:-}")"
 DISCOVERY_ENGINE_LOCATIONS="${DISCOVERY_ENGINE_LOCATIONS:-}"
 AGENT_ENGINE_REGIONS="${AGENT_ENGINE_REGIONS:-}"
 ENABLE_GOVERNANCE_ACTIONS="${ENABLE_GOVERNANCE_ACTIONS:-true}"
-ENFORCEMENT_SCHEDULE="${ENFORCEMENT_SCHEDULE:-}"
+# Antigravity cap enforcement runs. They restore suspended users when a settlement period resets (in every
+# enforcement mode) and, in automatic mode only, suspend users over their cap. On by default so nobody stays
+# suspended past a reset; "off" (or --no-enforcement-schedule) leaves it to "Run enforcement now" in the dashboard.
+ENFORCEMENT_SCHEDULE_EXPLICIT=0
+[[ -n "${ENFORCEMENT_SCHEDULE+x}" ]] && ENFORCEMENT_SCHEDULE_EXPLICIT=1
+ENFORCEMENT_SCHEDULE="$(trim_ws "${ENFORCEMENT_SCHEDULE-*/15 * * * *}")"
+case "$ENFORCEMENT_SCHEDULE" in off|none) ENFORCEMENT_SCHEDULE="" ;; esac
 # Scheduler tick for scheduled work: the daily official price and exchange-rate check (at pricing.sync_time, default
 # 00:00 in the workspace timezone; a setting, not a cron here) and the telemetry route budget guard. "off" disables it.
 MAINTENANCE_SCHEDULE="$(trim_ws "${MAINTENANCE_SCHEDULE:-*/15 * * * *}")"
@@ -276,8 +305,16 @@ if [[ "$MAINTENANCE_SCHEDULE" != "off" ]]; then
   [[ "${#_cron_fields[@]}" -eq 5 ]] || die "MAINTENANCE_SCHEDULE must be a 5-field cron expression (for example */15 * * * *) or off"
 fi
 if [[ -n "$ENFORCEMENT_SCHEDULE" ]]; then
-  [[ "$ENABLE_GOVERNANCE_ACTIONS" == "true" ]] || die "ENFORCEMENT_SCHEDULE needs ENABLE_GOVERNANCE_ACTIONS=true"
-  [[ "$ACCESS_MODE" != "iap" ]] || die "ENFORCEMENT_SCHEDULE needs ACCESS_MODE google, google_oauth or password (IAP blocks the scheduler's OIDC token)"
+  read -r -a _cron_fields <<<"$ENFORCEMENT_SCHEDULE"
+  [[ "${#_cron_fields[@]}" -eq 5 ]] || die "ENFORCEMENT_SCHEDULE must be a 5-field cron expression (for example */15 * * * *) or off"
+  if [[ "$ENABLE_GOVERNANCE_ACTIONS" != "true" ]]; then
+    [[ "$ENFORCEMENT_SCHEDULE_EXPLICIT" == "1" ]] && die "ENFORCEMENT_SCHEDULE needs ENABLE_GOVERNANCE_ACTIONS=true"
+    ENFORCEMENT_SCHEDULE=""  # read-only install: nothing is ever suspended, so there is nothing to restore
+  elif [[ "$ACCESS_MODE" == "iap" ]]; then
+    [[ "$ENFORCEMENT_SCHEDULE_EXPLICIT" == "1" ]] && die "ENFORCEMENT_SCHEDULE needs ACCESS_MODE google, google_oauth or password (IAP blocks the scheduler's OIDC token)"
+    warn "IAP access mode: no Antigravity enforcement schedule (IAP blocks the scheduler's OIDC token); run enforcement from the dashboard after each period reset"
+    ENFORCEMENT_SCHEDULE=""
+  fi
 fi
 for flag in CREATE_LOG_SINK ENABLE_DATA_ACCESS_LOGS ENABLE_GE_OBSERVABILITY GE_PROMPT_LOGGING ENABLE_GOVERNANCE_ACTIONS PREPARE_LINKED_PROJECTS; do
   [[ "${!flag}" == "true" || "${!flag}" == "false" ]] || die "$flag must be true or false"
@@ -497,6 +534,9 @@ else
 fi
 if [[ "$ENABLE_GOVERNANCE_ACTIONS" == "true" ]]; then
   for role in "${GOVERNANCE_ROLES[@]}"; do grant_member "$PROJECT_ID" "serviceAccount:${SA_EMAIL}" "$role"; done
+  # Marker roles for per-user Antigravity caps (Gemini Enterprise User without businessaicode.*), created now so
+  # suspensions work right after installation without the "Create marker roles" step.
+  ensure_antigravity_marker_roles "$PROJECT_ID"
 else
   info "governance write roles skipped (ENABLE_GOVERNANCE_ACTIONS=false): dashboards and simulations only"
 fi
@@ -1133,3 +1173,11 @@ info "Audit dataset : ${PROJECT_ID}:${AUDIT_DATASET} (${DATASET_LOCATION}, Data 
 [[ -n "$NORMALIZED_SCAN_PROJECTS" ]] && info "Linked scan   : ${NORMALIZED_SCAN_PROJECTS}"
 info "Settings store: gs://${SETTINGS_BUCKET}"
 info "Container     : ${IMAGE}"
+if [[ "$ENABLE_GOVERNANCE_ACTIONS" == "true" ]]; then
+  if [[ -n "$ENFORCEMENT_SCHEDULE" ]]; then
+    info "Antigravity caps: enforcement runs ${ENFORCEMENT_SCHEDULE} (${WORKSPACE_TIMEZONE}); suspended users are restored automatically at each period reset"
+  else
+    info "Antigravity caps: no enforcement schedule; select Run enforcement now in the dashboard after each period reset"
+  fi
+  antigravity_readiness "$PROJECT_ID"
+fi

@@ -117,6 +117,7 @@ CLI_REGION=""
 CLI_ADMINS=""
 CLI_VIEWERS=""
 EXTRA_ARGS=()
+DEPLOY_ONLY_ARGS=()
 
 need_val() { [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || die "$1 needs a value"; }
 while [[ $# -gt 0 ]]; do
@@ -134,6 +135,9 @@ while [[ $# -gt 0 ]]; do
       need_val "$@"; EXTRA_ARGS+=("$1" "$2"); shift 2 ;;
     --read-only|--data-access-logs|--no-data-access-logs|--prepare-linked-projects|--no-prepare-linked-projects|--auto-discover-projects|--no-auto-discover-projects|--log-prompts|--no-log-prompts|--skip-preflight-blockers)
       EXTRA_ARGS+=("$1"); shift ;;
+    # Deploy-only flags (prepare.sh does not take them).
+    --enforcement-schedule) need_val "$@"; DEPLOY_ONLY_ARGS+=("$1" "$2"); shift 2 ;;
+    --no-enforcement-schedule) DEPLOY_ONLY_ARGS+=("$1"); shift ;;
     -h|--help) show_install_help 0 ;;
     *) echo "unknown argument: $1" >&2; show_install_help 2 ;;
   esac
@@ -299,5 +303,6 @@ else
   DEPLOY_CMD+=(--project "$TARGET_PROJECTS")
 fi
 [[ ${#EXTRA_ARGS[@]} -gt 0 ]] && DEPLOY_CMD+=("${EXTRA_ARGS[@]}")
+[[ ${#DEPLOY_ONLY_ARGS[@]} -gt 0 ]] && DEPLOY_CMD+=("${DEPLOY_ONLY_ARGS[@]}")
 
 exec "${DEPLOY_CMD[@]}"

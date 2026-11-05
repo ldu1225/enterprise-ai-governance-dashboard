@@ -10,7 +10,8 @@ Safety rules (from agy-admin):
 Per-user caps over a settlement period:
 - A user is over the cap when tokens, requests or the estimated cost (tokens x configured unit
   prices) reach the cap within the period (daily / weekly / monthly calendar periods reset at
-  local midnight in governance.antigravity.reset_timezone).
+  governance.antigravity.reset_time (weekly periods on reset_weekday) in reset_timezone, which
+  defaults to the workspace time zone).
 - enforcement_mode=auto: the scheduled enforcement run suspends over-cap users until the period
   resets. enforcement_mode=manual: over-cap users wait in a review queue; an administrator
   suspends them or allows them for the rest of the period.
@@ -118,6 +119,14 @@ def gov_config(settings):
         cap_marker_id=ag["cap_marker_role"], admin_marker_id=ag["admin_marker_role"],
         change_budget_min=int(ag.get("change_budget_min", 10)),
         change_budget_ratio=float(ag.get("change_budget_ratio", 0.2)))
+
+
+def period_anchor(settings):
+    """Keyword arguments that locate calendar period boundaries: the reset time zone (empty = the
+    workspace time zone), the weekly reset weekday and the reset time."""
+    ag = settings["governance"]["antigravity"]
+    tz = ag.get("reset_timezone") or (settings.get("workspace") or {}).get("timezone") or "UTC"
+    return {"tz": tz, "weekday": ag.get("reset_weekday", 0) or 0, "at": ag.get("reset_time") or "00:00"}
 
 
 @dataclass(frozen=True)
@@ -937,10 +946,11 @@ def compute_status(ctx, period, window, token_cap, request_cap, cost_cap=None, m
     ag = ctx.settings["governance"]["antigravity"]
     cost_cap = float(ag.get("cost_cap") or 0) if cost_cap is None else float(cost_cap)
     mode = mode or ag.get("enforcement_mode") or "manual"
-    tz = ag.get("reset_timezone") or "UTC"
+    anchor = period_anchor(ctx.settings)
+    tz = anchor["tz"]
     now = now or dt.datetime.now(dt.timezone.utc)
-    start, end = timeutil.governance_window(period, window, now=now, tz=tz)
-    next_reset = timeutil.governance_next_reset(period, window, now=now, tz=tz)
+    start, end = timeutil.governance_window(period, window, now=now, **anchor)
+    next_reset = timeutil.governance_next_reset(period, window, now=now, **anchor)
     gstate = governance_state(ctx)
     exceptions = active_exceptions(gstate, now)
     suspensions = {s["email"]: s for s in gstate.get("suspensions") or []}
@@ -1062,7 +1072,9 @@ def compute_status(ctx, period, window, token_cap, request_cap, cost_cap=None, m
                    "currency": pricing.currency, "currencySetting": ag.get("currency") or "",
                    "period": period, "window": window,
                    "windowStart": iso(start), "windowEnd": iso(end), "nextReset": iso(next_reset),
-                   "resetTimezone": tz, "changeBudget": budget, "enforcementMode": mode,
+                   "resetTimezone": tz, "resetWeekday": anchor["weekday"], "resetTime": anchor["at"],
+                   "creditPerUserMonth": float(ag.get("credit_per_user_month") or 0),
+                   "changeBudget": budget, "enforcementMode": mode,
                    "pricing": pricing.public(used_models)},
         "usageSource": usage_source, "gates": gates,
         "population": {"total": len(users) if population_known else None,
@@ -1088,7 +1100,7 @@ def compute_status(ctx, period, window, token_cap, request_cap, cost_cap=None, m
     }
     internal = {"policy": policy, "readable": readable, "cfg": cfg, "usage": usage, "idx": idx, "now": now,
                 "nextReset": next_reset, "tz": tz, "mode": mode, "state": gstate,
-                "periodEnd": timeutil.governance_period_end(period, window, now=now, tz=tz)}
+                "periodEnd": timeutil.governance_period_end(period, window, now=now, **anchor)}
     return payload, internal
 
 
@@ -1547,7 +1559,7 @@ def exception_save(ctx):
     ag = ctx.settings["governance"]["antigravity"]
     until = None
     if scope == "period":
-        until = timeutil.governance_period_end(ag["period"], ag["window"], tz=ag.get("reset_timezone") or "UTC")
+        until = timeutil.governance_period_end(ag["period"], ag["window"], **period_anchor(ctx.settings))
     item = _exception_item(ctx, email, kind, until, note, caps)
 
     def apply(state):
@@ -1621,7 +1633,7 @@ def _change_user(ctx, decide, uid=None, email=None):
     new_state, action); action None means that no change was needed."""
     cfg = gov_config(ctx.settings)
     ag = ctx.settings["governance"]["antigravity"]
-    start, end = timeutil.governance_window(ag["period"], ag["window"], tz=ag.get("reset_timezone") or "UTC")
+    start, end = timeutil.governance_window(ag["period"], ag["window"], **period_anchor(ctx.settings))
     with _WRITE_LOCK:
         usage = antigravity_usage(ctx, start, end)
         for attempt in (1, 2):
@@ -1673,7 +1685,7 @@ def _sync_after_action(ctx, email, previous, action):
     if action == "disallow":
         item = _exception_item(ctx, email, "block", None, "Disallowed by an administrator.")
     elif action == "allow" and previous == CAPPED:
-        until = timeutil.governance_period_end(ag["period"], ag["window"], tz=ag.get("reset_timezone") or "UTC")
+        until = timeutil.governance_period_end(ag["period"], ag["window"], **period_anchor(ctx.settings))
         item = _exception_item(ctx, email, "allow", until, "Restored early by an administrator.")
 
     def apply(state):
