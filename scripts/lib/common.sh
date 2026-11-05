@@ -1166,6 +1166,40 @@ PYCODE
   return $rc
 }
 
+# grant_license_reader PROJECT SA_EMAIL ROLE_ID PERMISSIONS
+# Best effort, for linked projects: creates (or updates) the read-only custom role ROLE_ID with PERMISSIONS in
+# PROJECT and binds it to SA_EMAIL. The predefined roles/discoveryengine.viewer has neither
+# discoveryengine.licenseConfigs.list nor discoveryengine.userStores.listUserLicenses, so without this role the
+# Gemini Enterprise seats of PROJECT stay hidden. Never fails the caller: when the deploying account cannot do
+# it, the warning carries the exact commands for an Owner of PROJECT. With DRY_RUN=1 it only prints the plan.
+grant_license_reader() {
+  local project="$1" sa="$2" role_id="$3" perms="$4" role create_cmd bind_cmd
+  role="projects/${project}/roles/${role_id}"
+  if [[ "${DRY_RUN:-0}" == "1" ]]; then
+    info "[dry-run] custom role ${role} (${perms}) -> ${sa}"
+    return 0
+  fi
+  create_cmd="gcloud iam roles create ${role_id} --project ${project} --title \"AI Control Plane License Reader\" --permissions ${perms} --stage GA"
+  bind_cmd="gcloud projects add-iam-policy-binding ${project} --member serviceAccount:${sa} --role ${role} --condition=None"
+  gcloud iam roles undelete "$role_id" --project "$project" --quiet >/dev/null 2>&1 || true
+  if gcloud iam roles describe "$role_id" --project "$project" >/dev/null 2>&1; then
+    gcloud iam roles update "$role_id" --project "$project" --permissions "$perms" --quiet >/dev/null 2>&1 || true
+  elif ! gcloud iam roles create "$role_id" --project "$project" \
+      --title "AI Control Plane License Reader" \
+      --description "Read-only Gemini Enterprise license config and user seat reader" \
+      --permissions "$perms" --stage GA --quiet >/dev/null 2>&1; then
+    warn "could not create the license reader role ${role}, so Gemini Enterprise seats in ${project} stay hidden. As an Owner of ${project}, run: ${create_cmd} && ${bind_cmd}"
+    return 0
+  fi
+  if gcloud projects add-iam-policy-binding "$project" --member "serviceAccount:${sa}" --role "$role" \
+      --condition=None --quiet >/dev/null 2>&1; then
+    info "linked project ${project}: granted ${role} (Gemini Enterprise seats) to ${sa}"
+  else
+    warn "could not grant ${role} to ${sa}, so Gemini Enterprise seats in ${project} stay hidden. As an Owner of ${project}, run: ${bind_cmd}"
+  fi
+  return 0
+}
+
 # Log Router filter for the AI logs the dashboard reads (README 6.1 shows the same text).
 # Cloud Logging binds OR more tightly than AND, so the audit-log clause sits in its own parentheses.
 # Without them the Gemini Enterprise, Model Armor and Antigravity logs would also have to be audit logs,

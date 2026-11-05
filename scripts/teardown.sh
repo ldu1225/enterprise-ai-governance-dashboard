@@ -175,12 +175,17 @@ quiet gcloud artifacts repositories remove-iam-policy-binding "$AR_REPOSITORY" \
   --location "$REGION" --project "$PROJECT_ID" \
   --member "serviceAccount:${BUILD_SA}" --role roles/artifactregistry.writer --quiet || true
 
+TORN_LINKED=()
 if [[ -n "$SCAN_PROJECTS" ]]; then
   IFS=',' read -r -a raw_linked <<<"$SCAN_PROJECTS"
   for raw_lp in "${raw_linked[@]}"; do
     lp="$(normalize_project_id "$raw_lp")"
     [[ -z "$lp" || "$lp" == "$PROJECT_ID" ]] && continue
+    [[ " ${TORN_LINKED[*]-} " == *" ${lp} "* ]] && continue
+    # Every role deploy.sh granted there is a binding of this member and is removed here, including the license
+    # reader custom role (projects/<linked project>/roles/CustomAiControlPlaneLicenseReader).
     remove_bindings "$lp" "serviceAccount:${SA_EMAIL}"
+    TORN_LINKED+=("$lp")
   done
 fi
 
@@ -251,3 +256,7 @@ info "Marker roles (delete only after every suspended user is restored; suspende
 info "Default IDs are shown; use your own if you changed governance.antigravity.cap_marker_role or admin_marker_role:"
 info "  gcloud iam roles delete CustomAntigravityCapBlocked --project ${PROJECT_ID}"
 info "  gcloud iam roles delete CustomAntigravityAdminBlocked --project ${PROJECT_ID}"
+info "License reader custom role (its bindings are removed above; another dashboard in the same project may still use it):"
+for lr_project in "$PROJECT_ID" ${TORN_LINKED[@]+"${TORN_LINKED[@]}"}; do
+  info "  gcloud iam roles delete CustomAiControlPlaneLicenseReader --project ${lr_project}"
+done

@@ -583,10 +583,37 @@ def permission_status(ctx):
 # Usage (BigQuery sink or Cloud Logging)
 # ---------------------------------------------------------------------------
 
+# Antigravity inference logs name the caller in labels.user_id as an IAM principal: "user:alice@example.com" (the
+# documented format; older entries carried the bare email). Usage is keyed by the plain lowercase email, the same key
+# as the direct "user:" bindings of the IAM policy (PolicyIndex.direct_users), so caps, the user list and IAM states
+# line up instead of showing "user:..." duplicates that never match a binding.
+USER_PRINCIPAL_PREFIX_RE = r"(?i)^user:"
+
+
+def agy_user_sql(user_expr):
+    """BigQuery expression: the plain lowercase email behind labels.user_id (a leading "user:" removed)."""
+    return "LOWER(REGEXP_REPLACE(TRIM(%s), r'%s', ''))" % (user_expr, USER_PRINCIPAL_PREFIX_RE)
+
+
+def usage_user(principal):
+    """The person behind labels.user_id as a plain lowercase email, or None. As in direct_users only users count:
+    service accounts ("serviceAccount:..." or a .gserviceaccount.com email), workforce identities ("principal://...")
+    and other principal types get no per-user usage or caps."""
+    if not isinstance(principal, str):
+        return None
+    value = principal.strip().lower()
+    if value.startswith("user:"):
+        value = value[5:].strip()
+    if ":" in value.partition("@")[0] or not is_human(value):
+        return None
+    return value
+
+
 def agy_fields(src, alias="t"):
     s = src.schema
+    user = expr(alias, s, "labels.user_id", cast="STRING")
     return {
-        "user": expr(alias, s, "labels.user_id", cast="STRING"),
+        "user": agy_user_sql(user) if user else None,
         "client": expr(alias, s, "labels.client_name", cast="STRING"),
         "model": expr(alias, s, "labels.model_id", "labels.model", cast="STRING"),
         "total": expr(alias, s, "jsonPayload.metadata.totalTokenCount", cast="INT64"),
@@ -632,9 +659,9 @@ def _bq_usage(ctx, src, start, end, email=None, rng=None):
     hi = (end + dt.timedelta(days=1)).strftime("%Y%m%d")
     params.update({"sfx_start": lo, "sfx_end": hi})
     if email:
-        where += " AND LOWER(%s) = @email" % f["user"]
+        where += " AND %s = @email" % f["user"]  # matches "user:<email>" and the bare email alike
         params["email"] = email
-    base = ("WITH %s,\nu AS (SELECT %s AS ts, LOWER(%s) AS email, %s AS client, %s AS model, IFNULL(%s, 0) AS total, "
+    base = ("WITH %s,\nu AS (SELECT %s AS ts, %s AS email, %s AS client, %s AS model, IFNULL(%s, 0) AS total, "
             "IFNULL(%s, 0) AS prompt, IFNULL(%s, 0) AS cand FROM s t WHERE %s)"
             % (src.cte("s", start="w_start", end="w_end"), f["ts"], f["user"], f["client"] or null,
                f["model"] or null, f["total"] or "0", f["prompt"] or "0", f["candidates"] or "0", where))
@@ -645,9 +672,13 @@ def _bq_usage(ctx, src, start, end, email=None, rng=None):
     for row in rows:
         if not row.get("email"):
             continue
-        u = usage.user(row["email"])
         requests, tokens = to_int(row.get("requests")), to_int(row.get("tokens"))
         prompt, cand = to_int(row.get("prompt_tokens")), to_int(row.get("candidate_tokens"))
+        usage.records += requests
+        person = usage_user(row["email"])
+        if person is None:
+            continue  # a service account or another non-user principal: telemetry, but no per-user usage
+        u = usage.user(person)
         u["requests"] += requests
         u["tokens"] += tokens
         u["promptTokens"] += prompt
@@ -659,7 +690,6 @@ def _bq_usage(ctx, src, start, end, email=None, rng=None):
         last = row.get("last_ts")
         if last is not None and (u["last"] is None or last > u["last"]):
             u["last"] = last
-        usage.records += requests
     if email:
         for dim, target in (("model", usage.by_model), ("client", usage.by_client)):
             sub = ctx.query(base + "\nSELECT %s AS k, COUNT(*) AS requests, SUM(total) AS tokens, SUM(prompt) AS p, "
@@ -675,7 +705,9 @@ def _bq_usage(ctx, src, start, end, email=None, rng=None):
         sub = ctx.query(base + "\nSELECT %s AS bucket, email, COUNT(*) AS requests, SUM(total) AS tokens "
                         "FROM u GROUP BY bucket, email" % bucket_sql("ts"), params, "antigravity")
         for row in sub:
-            usage.daily[(row.get("email"), row.get("bucket"))] = (to_int(row.get("requests")), to_int(row.get("tokens")))
+            person = usage_user(row.get("email"))
+            if person is not None:
+                usage.daily[(person, row.get("bucket"))] = (to_int(row.get("requests")), to_int(row.get("tokens")))
     usage.ok = True
     return usage
 
@@ -686,7 +718,8 @@ def _logging_usage_project(ctx, project, log_id, start, end, email=None, rng=Non
     if email:
         if not config.EMAIL_RE.match(email):
             raise GcpError("invalid", message="invalid email")
-        flt += ' AND labels.user_id="%s"' % email
+        # labels.user_id is "user:<email>" (documented format); older entries carried the bare email.
+        flt += ' AND (labels.user_id="user:%s" OR labels.user_id="%s")' % (email, email)
     ag = ctx.settings["governance"]["antigravity"]
     limit = int(ag.get("max_log_entries") or 20000)
     tz = timeutil.get_zone(ctx.tz_name)
@@ -742,9 +775,13 @@ def _logging_usage(ctx, start, end, email=None, rng=None):
                 usage.truncated = True
     for entry in all_entries:
         labels = entry.get("labels") or {}
-        user = (labels.get("user_id") or "").strip().lower()
-        if not user:
+        principal = labels.get("user_id")
+        if not isinstance(principal, str) or not principal.strip():
             continue
+        usage.records += 1
+        user = usage_user(principal)  # "user:alice@example.com" -> "alice@example.com"
+        if user is None:
+            continue  # a service account or another non-user principal: telemetry, but no per-user usage
         meta = ((entry.get("jsonPayload") or {}).get("metadata") or {})
         total = to_int(meta.get("totalTokenCount"))
         prompt = to_int(meta.get("promptTokenCount"))
@@ -764,7 +801,6 @@ def _logging_usage(ctx, start, end, email=None, rng=None):
         Usage.add_model(u, model, 1, total, prompt, cand)
         if ts and (u["last"] is None or ts > u["last"]):
             u["last"] = ts
-        usage.records += 1
         if email:
             for key, target in ((model or "unknown", usage.by_model), (client or "unknown", usage.by_client)):
                 agg = target.setdefault(key, {"requests": 0, "tokens": 0, "promptTokens": 0, "candidateTokens": 0})

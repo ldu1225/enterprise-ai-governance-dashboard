@@ -25,6 +25,7 @@
 #   --billing-account ID    Cloud Billing account ID to link if the project is unbilled
 #   --read-only             Skip IAM governance write roles (ENABLE_GOVERNANCE_ACTIONS=false)
 #   --no-data-access-logs   Skip enabling Data Access audit logs
+#   --no-log-prompts        Turn on Gemini Enterprise usage logs without prompt/response logging (sensitiveLoggingEnabled)
 #   --vpc-network NAME      Send Cloud Run egress through this VPC (needed when run.allowedVPCEgress forces it)
 #   --vpc-subnet NAME       Subnet for --vpc-network (enable Private Google Access on it)
 #   --skip-preflight-blockers  Continue even when the organization policy preflight finds blockers
@@ -54,8 +55,9 @@ CLI_READ_ONLY=""
 CLI_DATA_ACCESS_LOGS=""
 CLI_PREPARE_LINKED=""
 CLI_SCAN_ALL=""
+CLI_LOG_PROMPTS=""
 
-usage() { sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 need_arg() { [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || die "$1 needs a value"; }
 
 normalize_cli_args "$@"
@@ -77,6 +79,8 @@ while [[ $# -gt 0 ]]; do
     --read-only) CLI_READ_ONLY="1"; shift ;;
     --data-access-logs) CLI_DATA_ACCESS_LOGS="true"; shift ;;
     --no-data-access-logs) CLI_DATA_ACCESS_LOGS="false"; shift ;;
+    --log-prompts) CLI_LOG_PROMPTS="true"; shift ;;
+    --no-log-prompts) CLI_LOG_PROMPTS="false"; shift ;;
     --prepare-linked-projects) CLI_PREPARE_LINKED="true"; shift ;;
     --no-prepare-linked-projects) CLI_PREPARE_LINKED="false"; shift ;;
     --vpc-network) need_arg "$@"; VPC_NETWORK="$2"; shift 2 ;;
@@ -152,6 +156,7 @@ SCAN_ALL_PROJECTS="${SCAN_ALL_PROJECTS:-${AUTO_DISCOVER_PROJECTS:-}}"
 [[ -n "$CLI_BILLING_ACCOUNT" ]] && BILLING_ACCOUNT_ID="$CLI_BILLING_ACCOUNT"
 [[ "$CLI_READ_ONLY" == "1" ]] && ENABLE_GOVERNANCE_ACTIONS="false"
 [[ -n "$CLI_DATA_ACCESS_LOGS" ]] && ENABLE_DATA_ACCESS_LOGS="$CLI_DATA_ACCESS_LOGS"
+[[ -n "$CLI_LOG_PROMPTS" ]] && GE_PROMPT_LOGGING="$CLI_LOG_PROMPTS"
 [[ -n "$CLI_PREPARE_LINKED" ]] && PREPARE_LINKED_PROJECTS="$CLI_PREPARE_LINKED"
 [[ -n "$CLI_SCAN_ALL" ]] && SCAN_ALL_PROJECTS="$CLI_SCAN_ALL"
 
@@ -573,6 +578,9 @@ if [[ -n "$SCAN_PROJECTS" ]]; then
         warn "could not grant IAM roles on linked project ${lp} with ${ACCOUNT} (grant read roles to ${SA_EMAIL} if needed)"
       fi
     fi
+    # Gemini Enterprise seats of the linked project: the same read-only custom role as in the hub, because
+    # roles/discoveryengine.viewer cannot list license configs or user licenses (best effort, honors DRY_RUN).
+    grant_license_reader "$lp" "$SA_EMAIL" "$LICENSE_READER_ROLE_ID" "$LICENSE_READER_PERMS"
   done
   if [[ ${#CLEAN_LINKED[@]} -gt 0 ]]; then
     NORMALIZED_SCAN_PROJECTS="$(IFS=','; echo "${CLEAN_LINKED[*]}")"
@@ -774,11 +782,16 @@ if [[ -z "$AGENT_ENGINE_REGIONS" || -z "$AI_LOCATION" ]]; then
   info "Agent Platform endpoints: Agent Engine=${AGENT_ENGINE_REGIONS}, AI location=${AI_LOCATION}"
 fi
 
+# HUB_GE_FOUND: 1 = a Gemini Enterprise app or license configuration exists in the hub, 0 = none found,
+# empty = not looked up here (DISCOVERY_ENGINE_LOCATIONS was configured). Read by the final summary.
+HUB_GE_FOUND=""
 if [[ -z "$DISCOVERY_ENGINE_LOCATIONS" ]]; then
   DISCOVERY_ENGINE_LOCATIONS="$(ge_locations "$PROJECT_ID")"
   if [[ -n "$DISCOVERY_ENGINE_LOCATIONS" ]]; then
+    HUB_GE_FOUND=1
     info "Gemini Enterprise locations: ${DISCOVERY_ENGINE_LOCATIONS} (detected)"
   else
+    HUB_GE_FOUND=0
     DISCOVERY_ENGINE_LOCATIONS="global"
     info "no Gemini Enterprise app or license found yet: using DISCOVERY_ENGINE_LOCATIONS=global"
   fi
@@ -1133,3 +1146,15 @@ info "Audit dataset : ${PROJECT_ID}:${AUDIT_DATASET} (${DATASET_LOCATION}, Data 
 [[ -n "$NORMALIZED_SCAN_PROJECTS" ]] && info "Linked scan   : ${NORMALIZED_SCAN_PROJECTS}"
 info "Settings store: gs://${SETTINGS_BUCKET}"
 info "Container     : ${IMAGE}"
+# A hub without Gemini Enterprise and no linked project usually means Gemini Enterprise runs in another project the
+# runtime service account cannot read (its pages stay empty). Advice only: never fails the deployment, and a dry run
+# only reuses the detection above (no extra lookup).
+if [[ ${#CLEAN_LINKED[@]} -eq 0 && ",$DISABLED_MODULES," != *",gemini_enterprise,"* ]]; then
+  if [[ -z "$HUB_GE_FOUND" && "$DRY_RUN" != "1" ]]; then
+    if [[ -n "$(ge_locations "$PROJECT_ID" || true)" ]]; then HUB_GE_FOUND=1; else HUB_GE_FOUND=0; fi
+  fi
+  if [[ "$HUB_GE_FOUND" == "0" ]]; then
+    warn "No Gemini Enterprise app or seats found in ${PROJECT_ID}. If Gemini Enterprise runs in another project, install into that project (recommended: governance and marker roles act on the primary project's IAM) or re-run with --link-projects <GE project>."
+    warn "[한국어 안내] ${PROJECT_ID}에서 Gemini Enterprise 앱이나 라이선스 좌석을 찾지 못했습니다. Gemini Enterprise가 다른 프로젝트에서 운영 중이면 그 프로젝트에 설치하거나(권장: 거버넌스와 마커 역할은 대표 프로젝트의 IAM에 적용됩니다) --link-projects <GE 프로젝트>로 다시 실행하세요."
+  fi
+fi

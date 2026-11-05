@@ -768,7 +768,8 @@ function prerequisites(ctx, p) {
   const items = [];
   (p.markerRoles || []).forEach((r) => items.push([r.exists, t('Marker role {role}', { role: r.role }), r.exists ? t('Present in project') : t('Missing')]));
   Object.entries(p.permissions || {}).forEach(([perm, ok]) => items.push([ok, perm, ok ? t('Granted') : t('Not granted to the control plane identity')]));
-  items.push([p.telemetryDetected, t('Antigravity inference telemetry'), p.telemetryDetected ? t('Detected') : t('Not detected')]);
+  items.push([p.telemetryDetected, t('Antigravity inference telemetry'), p.telemetryDetected ? t('Detected') : t('Not detected'),
+    p.telemetryDetected ? null : t('Counted only when Antigravity for organizations writes businessaicode.googleapis.com/inference_response logs in a scanned project. Antigravity used with a personal account writes no such log.')]);
   const missingRoles = (p.markerRoles || []).some((r) => !r.exists);
   const btn = missingRoles ? button({ label: t('Create marker roles'), icon: 'key', size: 'sm' }) : null;
   if (btn) {
@@ -793,9 +794,10 @@ function prerequisites(ctx, p) {
     });
   }
   return h('div', { class: 'stack' },
-    h('div', { class: 'checklist' }, items.map(([ok, label, sub]) => h('div', { class: 'check-item' },
+    h('div', { class: 'checklist' }, items.map(([ok, label, sub, hint]) => h('div', { class: 'check-item' },
       h('span', { class: ['ci-icon', ok ? 'ok' : 'no'] }, icon(ok ? 'check-circle' : 'x-circle', { size: 15 })),
-      h('div', { class: 'ci-text' }, h('div', { class: 'cell-mono' }, label), h('div', { class: 'ci-sub' }, sub))))),
+      h('div', { class: 'ci-text' }, h('div', { class: 'cell-mono' }, label), h('div', { class: 'ci-sub' }, sub),
+        hint ? h('div', { class: 'ci-sub' }, hint) : null)))),
     btn);
 }
 

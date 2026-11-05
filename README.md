@@ -284,7 +284,7 @@ bash <(curl -fsSL https://github.com/ldu1225/ai-control-plane/raw/main/scripts/i
 | `DATASET_LOCATION` | `REGION` (`asia-northeast3`) | 새로 만드는 데이터셋 위치 |
 | `ENABLE_DATA_ACCESS_LOGS` | `true` | Agent Platform, Discovery Engine, Model Armor 등 AI 서비스의 Data Access 감사 로그 켜기(`--no-data-access-logs`로 생략 가능) |
 | `ENABLE_GE_OBSERVABILITY` | `true` | `DISCOVERY_ENGINE_LOCATIONS`의 모든 Gemini Enterprise 앱에서 사용 로그(관측 가능성) 켜기. Owner 또는 Gemini Enterprise 관리자 권한이 필요하며, 권한이 없으면 경고만 남깁니다. |
-| `GE_PROMPT_LOGGING` | `true` | 사용자 이메일(`userIamPrincipal`), 프롬프트·응답 원문, 업로드 파일 이름이 `<elided>`로 가려지지 않도록 함께 기록합니다. |
+| `GE_PROMPT_LOGGING` | `true` | 사용자 이메일(`userIamPrincipal`), 프롬프트·응답 원문, 업로드 파일 이름이 `<elided>`로 가려지지 않도록 함께 기록합니다. `--no-log-prompts`로 끌 수 있습니다. |
 | `BILLING_PROJECT_ID` | 자동 탐지 | 결제 내보내기가 있는 프로젝트(비우면 `PROJECT_ID`에서 자동 탐지) |
 | `BILLING_DATASET` | 자동 탐지 | 결제 내보내기 데이터셋. 예: `billing_detailed_usage` |
 | `BILLING_TABLE` | 자동 탐지 | `gcp_billing_export_resource_v1_XXXXXX_XXXXXX_XXXXXX` (없으면 토큰 기반 역산 비용 자동 적용) |
@@ -465,7 +465,7 @@ Data Access 로그는 양이 많을 수 있고 Cloud Logging 수집 비용이 �
 
 ### 6.5 Antigravity 추론 로그
 
-Antigravity 사용자별 토큰 사용량은 Antigravity for organizations가 프로젝트에 기록하는 `businessaicode.googleapis.com/inference_response` 로그에서 읽습니다. BigQuery 싱크 테이블이 있으면 BigQuery를, 없으면 Cloud Logging API를 씁니다(`usage_source: auto`). 코딩 에이전트가 사용자 자격 증명으로 호출한 Google Cloud API 작업은 Antigravity 통제 화면의 **클라우드에서 에이전트가 실행한 작업**에 감사 로그 기준으로 표시됩니다.
+Antigravity 사용자별 토큰 사용량은 Antigravity for organizations가 프로젝트에 기록하는 `businessaicode.googleapis.com/inference_response` 로그에서 읽습니다. BigQuery 싱크 테이블이 있으면 BigQuery를, 없으면 Cloud Logging API를 씁니다(`usage_source: auto`). 사용자는 로그의 `labels.user_id`(IAM 주체 형식, 예: `user:alice@example.com`)에서 `user:`를 뺀 이메일로 집계해 프로젝트 IAM의 `user:` 바인딩과 맞추며, 서비스 계정 등 사용자가 아닌 주체는 사용자 목록과 한도에서 제외합니다. 코딩 에이전트가 사용자 자격 증명으로 호출한 Google Cloud API 작업은 Antigravity 통제 화면의 **클라우드에서 에이전트가 실행한 작업**에 감사 로그 기준으로 표시됩니다.
 
 ### 6.6 런타임 서비스 계정 권한
 
@@ -537,7 +537,7 @@ NotebookLM Data Access 감사 로그에서 활성 노트북, 사용자, 프롬�
 
 ### 7.7 모델 및 토큰
 
-- 모델은 결제 SKU, Cloud Monitoring `model_user_id`, Antigravity `model_id`에서 자동으로 발견됩니다. SKU 설명에서 모델 계열 단어(Gemini, Claude, Llama 등)를 찾고 리전, 모달리티, 입출력, 컨텍스트 구간 같은 수식어를 빼서 하나의 키(예: `gemini-3.8-flash`)로 묶습니다. Agent Platform 형식(`Gemini 3.8 Flash Global Text Input`), Gemini API 형식, Monitoring 모델 ID가 같은 모델로 합쳐집니다.
+- 모델은 결제 SKU, Cloud Monitoring `model_user_id`, Antigravity 추론 로그의 `model` 라벨(이전 형식 `model_id`)에서 자동으로 발견됩니다. SKU 설명에서 모델 계열 단어(Gemini, Claude, Llama 등)를 찾고 리전, 모달리티, 입출력, 컨텍스트 구간 같은 수식어를 빼서 하나의 키(예: `gemini-3.8-flash`)로 묶습니다. Agent Platform 형식(`Gemini 3.8 Flash Global Text Input`), Gemini API 형식, Monitoring 모델 ID가 같은 모델로 합쳐집니다.
 - 모델별 토큰은 Cloud Monitoring `publisher/online_serving/token_count`(Agent Platform)를 기준으로 하고, Monitoring에 잡히지 않는 Gemini API 결제 토큰을 더합니다. Monitoring 지표가 없는 모델은 결제 SKU의 토큰 사용량을 씁니다. 호출 수와 오류율은 `model_invocation_count`에서 계산합니다.
 - 제품이 모델 사용량을 자체 SKU로 다시 청구하는 경우 "제품별 사용량" 카드에 따로 표시하고, 같은 토큰이 기반 모델에도 청구되므로 모델 토큰 합계에는 더하지 않습니다.
 - Gemini 4 Carbon, Gemini 4 Argon처럼 새 모델이 처음 발견되면 "새 모델 감지" 알림이 뜹니다. `auto_enable_new_models: true`이면 바로 추적하고, `false`이면 관리자가 켤 때까지 합계에서 뺍니다.
@@ -860,7 +860,8 @@ bq update --time_partitioning_expiration 10368000 PROJECT_ID:ge_analytics.modela
 | Gemini Enterprise·Model Armor 화면만 비어 있음 | v2.1.0 이전 `deploy.sh`가 만든 싱크의 필터 문제입니다([6.1](#61-감사-로그-싱크-bigquery)). `CREATE_LOG_SINK=true`로 `deploy.sh`를 다시 실행하거나 `scripts/prepare.sh`를 실행하면 고쳐지고, 그때부터 들어옵니다. |
 | Gemini Enterprise 사용 로그를 켜지 못했다는 경고 | 실행 계정에 Owner 또는 Gemini Enterprise 관리자(`roles/discoveryengine.agentspaceAdmin`)가 필요합니다. 콘솔에서 직접 켜도 됩니다([6.3](#63-gemini-enterprise-로그)). |
 | 모델별 토큰이 비어 있음 | `roles/monitoring.viewer`, 결제 내보내기 토큰 SKU 존재 여부 |
-| 라이선스 좌석이 비어 있거나 적게 나옴 | `roles/discoveryengine.viewer`, 구독을 배분한 위치가 모두 `DISCOVERY_ENGINE_LOCATIONS`에 있는지(`deploy.env`에서 비워 두고 `scripts/deploy.sh`를 다시 실행하면 다시 감지합니다) |
+| 라이선스 좌석이 비어 있거나 적게 나옴 | `roles/discoveryengine.viewer`와 라이선스 읽기 커스텀 역할 `CustomAiControlPlaneLicenseReader`(대표·연동 프로젝트 모두), 구독을 배분한 위치가 모두 `DISCOVERY_ENGINE_LOCATIONS`에 있는지(`deploy.env`에서 비워 두고 `scripts/deploy.sh`를 다시 실행하면 다시 감지합니다) |
+| `discoveryengine.*`(licenseConfigs, userLicenses, engines) 또는 `user_activity` 테이블 접근 거부 | 런타임 서비스 계정에 Gemini Enterprise가 있는 프로젝트의 권한이 없습니다. 대개 대시보드를 다른 프로젝트에 설치한 경우입니다. Gemini Enterprise 프로젝트에 설치하거나 `--link-projects`로 연동하고, 이미 설치했다면 [14.5](#145-gemini-enterprise가-다른-프로젝트에-있을-때)의 권한 부여 명령을 실행합니다. |
 | Antigravity 사용자가 0명 | `inference_response` 로그가 프로젝트에 있는지(Antigravity for organizations). 개인 환경의 에이전트는 이 로그를 남기지 않습니다. |
 | Antigravity 상태가 모두 `UNKNOWN` | `resourcemanager.projects.getIamPolicy` 권한(`roles/iam.securityReviewer`) |
 | 정지/복원 버튼이 거부됨 | `ENABLE_GOVERNANCE_ACTIONS=true`로 다시 배포했는지, 마커 역할이 있는지, 게이트 결과 |
@@ -897,6 +898,46 @@ Cloud Shell에서 설치 명령 한 줄(`bash <(curl -fsSL https://github.com/ld
 
 판단이 틀렸다고 확신할 때만 `--skip-preflight-blockers`로 계속합니다.
 
+### 14.5 Gemini Enterprise가 다른 프로젝트에 있을 때
+
+대시보드를 새 프로젝트에 설치했는데 Gemini Enterprise는 기존 프로젝트에서 운영 중이면, 런타임 서비스 계정에 그 프로젝트 권한이 없어 Gemini Enterprise 화면이 비고 `discoveryengine.*`·`user_activity` 접근 거부 알림이 표시됩니다. 이 경우 배포 마지막 요약에 `No Gemini Enterprise app or seats found` 경고가 나옵니다.
+
+- **권장: Gemini Enterprise 프로젝트에 직접 설치합니다.** Antigravity 거버넌스(한도 초과 정지·복원, 개별 허용·차단), 마커 역할, IAM 조치는 모두 대표 프로젝트의 IAM 정책에 적용되고, Antigravity 사용자의 액세스 역할(`roles/discoveryengine.agentspaceUser`)도 Gemini Enterprise 프로젝트에 있습니다.
+
+  ```bash
+  scripts/deploy.sh --project GE_PROJECT_ID
+  ```
+
+- **대안: 읽기 전용으로 연동합니다.** 지금 프로젝트를 대표 프로젝트로 두고 `--link-projects`로 Gemini Enterprise 프로젝트를 연결하면 사용 현황, 라이선스 좌석, 로그를 함께 봅니다. 통제 기능은 대표 프로젝트에만 적용됩니다. 배포하는 계정에 Gemini Enterprise 프로젝트의 Owner 권한이 필요합니다.
+
+  ```bash
+  scripts/deploy.sh --project HUB_PROJECT_ID --link-projects GE_PROJECT_ID
+  ```
+
+> [!IMPORTANT]
+> 설치 스크립트는 기본으로 대표 프로젝트와 연동 프로젝트의 모든 Gemini Enterprise 앱에서 관측 가능성(사용 로그)과 **프롬프트·응답 로깅**(`sensitiveLoggingEnabled`)을 켜고, Data Access 감사 로그도 켭니다. 운영 중인 Gemini Enterprise 프로젝트라면 고객 동의를 먼저 받거나 `--no-log-prompts`, `--no-data-access-logs`를 붙여 실행합니다.
+
+이미 설치한 대시보드에 권한만 추가하려면 Gemini Enterprise 프로젝트의 Owner가 아래 명령을 실행합니다(런타임 서비스 계정 기본값 `ai-control-plane-sa`).
+
+```bash
+GE=GE_PROJECT_ID; HUB=HUB_PROJECT_ID
+SA="serviceAccount:ai-control-plane-sa@${HUB}.iam.gserviceaccount.com"
+# 라이선스 좌석 읽기 전용 커스텀 역할(roles/discoveryengine.viewer에는 licenseConfigs.list와 listUserLicenses가 없음).
+# 역할이 이미 있으면 create 대신 update를 씁니다.
+gcloud iam roles create CustomAiControlPlaneLicenseReader --project "$GE" \
+  --title "AI Control Plane License Reader" --stage GA \
+  --permissions discoveryengine.licenseConfigs.get,discoveryengine.licenseConfigs.list,discoveryengine.userStores.get,discoveryengine.userStores.listUserLicenses
+gcloud projects add-iam-policy-binding "$GE" --member "$SA" \
+  --role "projects/${GE}/roles/CustomAiControlPlaneLicenseReader" --condition=None
+for role in roles/discoveryengine.viewer roles/bigquery.dataViewer roles/bigquery.jobUser roles/bigquery.user \
+    roles/logging.viewer roles/logging.privateLogViewer roles/logging.configWriter roles/monitoring.viewer \
+    roles/aiplatform.viewer roles/iam.securityReviewer roles/modelarmor.viewer roles/serviceusage.serviceUsageConsumer; do
+  gcloud projects add-iam-policy-binding "$GE" --member "$SA" --role "$role" --condition=None
+done
+```
+
+그다음 **설정 > 워크스페이스 및 데이터 소스 > 추가 스캔 프로젝트**에 Gemini Enterprise 프로젝트를 넣습니다. 그 프로젝트에 감사 로그 싱크(`ge_analytics`)가 아직 없으면 `scripts/prepare.sh --project GE_PROJECT_ID`로 만듭니다(`--no-log-prompts`, `--no-data-access-logs` 동일하게 사용 가능).
+
 ## 15. 삭제
 
 ```bash
@@ -904,7 +945,7 @@ scripts/teardown.sh --project PROJECT_ID                # 서비스, 스케줄�
 scripts/teardown.sh --project PROJECT_ID --delete-data  # 설정 버킷(화면 설정, 예외 규칙, 정지 기록, 위젯 배치)과 로그 싱크까지 삭제
 ```
 
-BigQuery 감사 로그 데이터셋, Artifact Registry 저장소, Data Access 감사 로그 설정은 자동으로 지우지 않고 삭제 명령만 안내합니다. Gemini Enterprise 앱의 관측 가능성(사용 로그) 설정도 그대로 두며, 필요하면 콘솔의 앱 > 구성 > 관측 가능성에서 끕니다. 마커 역할도 정지된 사용자가 아직 쓰고 있을 수 있어 남겨 두고 삭제 명령만 안내합니다. 대시보드가 정지한 사용자가 있다면 삭제 전에 Antigravity 통제 화면에서 복원합니다.
+BigQuery 감사 로그 데이터셋, Artifact Registry 저장소, Data Access 감사 로그 설정은 자동으로 지우지 않고 삭제 명령만 안내합니다. Gemini Enterprise 앱의 관측 가능성(사용 로그) 설정도 그대로 두며, 필요하면 콘솔의 앱 > 구성 > 관측 가능성에서 끕니다. 마커 역할도 정지된 사용자가 아직 쓰고 있을 수 있어 남겨 두고 삭제 명령만 안내합니다. 라이선스 읽기 커스텀 역할(`CustomAiControlPlaneLicenseReader`)은 대표·연동 프로젝트의 바인딩만 지우고, 같은 프로젝트의 다른 대시보드가 쓸 수 있어 역할 자체는 남겨 두고 삭제 명령을 안내합니다. 대시보드가 정지한 사용자가 있다면 삭제 전에 Antigravity 통제 화면에서 복원합니다.
 
 ---
 
