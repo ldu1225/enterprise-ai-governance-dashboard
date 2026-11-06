@@ -420,7 +420,12 @@ PYIAP
       IAP_REPORT+=("                조직 밖 계정(협력사, 계열사 다른 조직, 개인 Gmail)은 IAP 화면에서 막힙니다") ;;
     *) IAP_REPORT+=("  OAuth       : 확인 불가. 기본값(Google 관리형)이면 이 프로젝트 조직 계정만 Google 로그인 가능") ;;
   esac
-  IAP_REPORT+=("  조직 밖 계정 : 대시보드 설정 > 접근 제어에서 ID/비밀번호 계정 발급 (README 5.4)")
+  if [[ "$mode" == "bridge" && -n "${OAUTH_CONNECT_SECRET:-}" ]]; then
+    IAP_REPORT+=("  조직 밖 계정 : 설정 > 접근 제어 > 'Google OAuth 클라이언트' 연결 (재배포 없음, README 5.4)")
+    IAP_REPORT+=("                리디렉션 URI ${BASE_URL:-<대시보드 주소>}/auth/google/callback. 또는 ID/비밀번호 계정 발급")
+  else
+    IAP_REPORT+=("  조직 밖 계정 : 대시보드 설정 > 접근 제어에서 ID/비밀번호 계정 발급 (README 5.4)")
+  fi
   IAP_REPORT+=("  허용 추가   : 대시보드 설정 > 접근 제어 > Google 로그인(IAP), 또는")
   IAP_REPORT+=("    gcloud iap web add-iam-policy-binding --resource-type=cloud-run --service=${service} --region=${region} --project=${project} --member=domain:<회사 도메인> --role=roles/iap.httpsResourceAccessor")
   IAP_REPORT+=("  반영까지 몇 분 걸릴 수 있습니다.")
@@ -1209,7 +1214,8 @@ if allowed or allv == "DENY" or managed_on("iam.managed.allowedPolicyMembers"):
     lines.append("AUTO|도메인 제한 공유(iam.allowedPolicyMemberDomains) 사용 중: allUsers/allAuthenticatedUsers 바인딩을 건너뛰고 "
                  "대시보드는 자체 로그인(--no-invoker-iam-check)으로 공개합니다. Google 로그인(IAP 브리지)에는 조직 도메인과 "
                  "Gemini Enterprise 사용자·프로젝트 구성원의 도메인을 허용하고, 거부된 항목은 배포 끝 'Google 로그인(IAP) 점검'에 "
-                 "표시합니다. 조직 밖 계정(협력사 등)은 ID/비밀번호 계정('admin' + Secret Manager 비밀번호로 로그인 후 발급)을 쓰세요.")
+                 "표시합니다. 조직 밖 계정(협력사 등)은 설정 > 접근 제어에서 Google OAuth 클라이언트를 연결하거나(재배포 없음) "
+                 "ID/비밀번호 계정('admin' + Secret Manager 비밀번호로 로그인 후 발급)을 쓰세요.")
 else:
     lines.append("OK|도메인 제한 공유: 없음")
 

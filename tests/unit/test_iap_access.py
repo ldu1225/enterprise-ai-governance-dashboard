@@ -85,12 +85,14 @@ class FakeIap:
 
 
 def fake_app(mode="google", bridge=BRIDGE, client=("", ""), audience="", environ=None, gcp=None):
+    auth = None
+    if mode == "google":
+        auth = types.SimpleNamespace(bridge_url=bridge, client_id=client[0], client_secret=client[1],
+                                     oauth_active=lambda: bool(client[0] and client[1]))
     return types.SimpleNamespace(
         environ=dict(environ or {}),
         settings=types.SimpleNamespace(base={"security": {"auth_mode": mode, "iap_audience": audience}}),
-        auth=types.SimpleNamespace(bridge_url=bridge, client_id=client[0], client_secret=client[1])
-        if mode == "google" else None,
-        gcp=gcp or FakeIap())
+        auth=auth, gcp=gcp or FakeIap())
 
 
 class ResourceTest(unittest.TestCase):

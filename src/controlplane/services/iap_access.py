@@ -62,8 +62,8 @@ def resource(app):
     go through IAP (password-only deployments, a Google OAuth client on the dashboard, local development)."""
     environ = getattr(app, "environ", None) or {}
     auth = getattr(app, "auth", None)
-    if auth is not None and auth.client_id and auth.client_secret:
-        return None  # the dashboard's own OAuth client signs users in; IAP is not on the path
+    if auth is not None and auth.oauth_active():
+        return None  # an OAuth client signs users in (deployment or connected in Settings); IAP is not on the path
     explicit = str(environ.get("IAP_ACCESS_RESOURCE") or environ.get("SIGN_IN_BRIDGE_IAP_RESOURCE") or "").strip()
     if _RESOURCE_RE.match(explicit):
         return explicit

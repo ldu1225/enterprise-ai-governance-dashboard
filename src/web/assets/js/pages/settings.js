@@ -12,7 +12,7 @@ import { api, isAbort } from '../core/api.js';
 import { store, isAdmin, session, isModuleEnabled } from '../core/state.js';
 import {
   pageHeader, card, button, banner, badge, statusBadge, switchInput, selectInput, field, textInput, toast, setBusy, kv, chip,
-  errorState, skeleton, confirmDialog, emptyState, dataTable, openDrawer, alertPermissionRequired, requireAdmin,
+  errorState, skeleton, confirmDialog, emptyState, dataTable, openDrawer, alertPermissionRequired, requireAdmin, codeBlock,
 } from '../core/components.js';
 import { errorText, serverText } from '../core/messages.js';
 import { fxRateText, fxSourceLabel, pricingSyncText } from './finops.js';
@@ -1075,6 +1075,8 @@ export function accessMembers(ctx = {}, editable = true) {
   const rerender = (ctx && ctx.rerender) || (() => {});
   const requestsSlot = h('div', { class: 'access-requests' });
   const googleSlot = h('div', { hidden: true });
+  const oauthSlot = h('div', { hidden: true });
+  let lastOauth = null;   // data.oauth of the last response (IAP texts point to it when a client can be connected)
   const tableSlot = h('div', { class: 'access-table-slot' }, skeleton('table'));
   const formError = h('div', { class: 'field-error', role: 'alert' });
   const emailInput = textInput({
@@ -1104,11 +1106,12 @@ export function accessMembers(ctx = {}, editable = true) {
     title: inDrawer ? null : t('Accounts & passwords'),
     subtitle: inDrawer ? null : t('Manage ID/Password accounts (including the built-in admin account) and approved Google accounts. Administrators can change settings; viewers have read-only access.'),
     bordered: !inDrawer,
-    body: h('div', { class: 'access-body' }, googleSlot, requestsSlot, editable ? addForm : null, tableSlot),
+    body: h('div', { class: 'access-body' }, googleSlot, oauthSlot, requestsSlot, editable ? addForm : null, tableSlot),
   });
   c.emailInput = emailInput;
 
   const apply = (data) => {
+    renderOauth(data);
     renderGoogle(data);
     renderRequests(data);
     renderTable(data);
@@ -1142,7 +1145,10 @@ export function accessMembers(ctx = {}, editable = true) {
       shown = true;
     }
     if (by.rejected) {
-      toast({ tone: 'danger', title: t('Google sign-in blocked by an organization policy'), text: t('Domain restricted sharing does not allow {list}, so Google sign-in stops at the IAP page. Set a password so they can sign in with ID and password.', { list: list(by.rejected) }), timeout: 14000 });
+      const text = lastOauth && lastOauth.canConnect
+        ? t('Domain restricted sharing does not allow {list} at IAP. Connect a Google OAuth client below so they can sign in with Google, or set a password for ID and password sign-in.', { list: list(by.rejected) })
+        : t('Domain restricted sharing does not allow {list}, so Google sign-in stops at the IAP page. Set a password so they can sign in with ID and password.', { list: list(by.rejected) });
+      toast({ tone: 'danger', title: t('Google sign-in blocked by an organization policy'), text, timeout: 14000 });
       shown = true;
     }
     if (by.denied) {
@@ -1179,12 +1185,17 @@ export function accessMembers(ctx = {}, editable = true) {
     (g.groups || []).forEach((gr) => chips.push(chip(t('Group {name}', { name: gr }), { title: `group:${gr}` })));
 
     let oauthText;
+    const canConnect = Boolean(lastOauth && lastOauth.canConnect);
     if (g.oauth === 'custom') {
       oauthText = t('A custom OAuth client is set on IAP: accounts outside your organization can also sign in when IAP admits them.');
     } else if (g.orgDomain) {
-      oauthText = t('IAP uses the Google-managed OAuth client: only accounts of your organization ({domain}) can sign in with Google. Accounts of other organizations and personal accounts (partners, Gmail) stop at the IAP page; give them an ID and password.', { domain: g.orgDomain });
+      oauthText = canConnect
+        ? t('IAP uses the Google-managed OAuth client: only accounts of your organization ({domain}) can sign in with Google here. For accounts of other organizations and personal accounts (partners, Gmail), connect a Google OAuth client below or give them an ID and password.', { domain: g.orgDomain })
+        : t('IAP uses the Google-managed OAuth client: only accounts of your organization ({domain}) can sign in with Google. Accounts of other organizations and personal accounts (partners, Gmail) stop at the IAP page; give them an ID and password.', { domain: g.orgDomain });
     } else {
-      oauthText = t('IAP uses the Google-managed OAuth client: only accounts of this project\'s organization can sign in with Google. Accounts of other organizations and personal accounts (partners, Gmail) stop at the IAP page; give them an ID and password.');
+      oauthText = canConnect
+        ? t('IAP uses the Google-managed OAuth client: only accounts of this project\'s organization can sign in with Google here. For accounts of other organizations and personal accounts (partners, Gmail), connect a Google OAuth client below or give them an ID and password.')
+        : t('IAP uses the Google-managed OAuth client: only accounts of this project\'s organization can sign in with Google. Accounts of other organizations and personal accounts (partners, Gmail) stop at the IAP page; give them an ID and password.');
     }
 
     const recheck = button({ label: t('Check again'), icon: 'refresh', size: 'sm', variant: 'ghost' });
@@ -1218,12 +1229,128 @@ export function accessMembers(ctx = {}, editable = true) {
       editable ? h('span', { class: 'field-help' }, t('Allow your company domain once: its accounts can then sign in with Google, and accounts that are not approved yet appear as access requests. Changes can take a few minutes to apply.')) : null));
   }
 
+  /** Google OAuth client of this project: every approved Google account can sign in, including accounts of other
+   *  organizations (partners, affiliates, Gmail). Connected here without redeploying; the secret goes to Secret Manager. */
+  function renderOauth(data) {
+    const o = (data && data.oauth) || null;
+    lastOauth = o;
+    if (inDrawer || !o || !o.available) { mount(oauthSlot); oauthSlot.hidden = true; return; }
+    oauthSlot.hidden = false;
+    const project = ((store.boot && store.boot.workspace) || {}).projectId || '';
+    const consoleUrl = (page) => `https://console.cloud.google.com/auth/${page}${project ? `?project=${encodeURIComponent(project)}` : ''}`;
+    const redirect = o.redirectUri || `${location.origin}/auth/google/callback`;
+    const deployment = o.active && o.source === 'deployment';
+
+    let state;
+    if (o.secretUnreadable) state = badge(t('Secret unreadable'), 'warning', { size: 'sm' });
+    else if (deployment) state = badge(t('Set by the deployment'), 'info', { size: 'sm' });
+    else if (o.active) state = badge(t('Connected'), 'success', { size: 'sm' });
+    else state = badge(t('Not connected'), 'neutral', { size: 'sm' });
+
+    let text;
+    if (deployment) text = t('Google sign-in uses the OAuth client set by the deployment (GOOGLE_OAUTH_CLIENT_ID): every approved Google account can sign in, including accounts of other organizations.');
+    else if (o.active) text = t('Google sign-in uses this OAuth client: every approved Google account can sign in, including accounts of other organizations (partners, affiliates, Gmail). Approve people in the account list below.');
+    else if (!o.canConnect) text = t('Deploy again with scripts/deploy.sh to connect an OAuth client here. It lets approved accounts of other organizations (partners, affiliates, Gmail) sign in with Google.');
+    else if (o.bridge) text = t('Google sign-in goes through Identity-Aware Proxy, which admits accounts of your organization only. Connect an OAuth client of this project so approved accounts of other organizations (partners, affiliates, Gmail) can sign in with Google too. No redeployment is needed.');
+    else text = t('Google sign-in is off: people sign in with an ID and password. Connect an OAuth client of this project so approved Google accounts, including accounts of other organizations, can sign in with Google. No redeployment is needed.');
+
+    const unreadable = o.secretUnreadable ? banner({
+      tone: 'warning',
+      title: t('The OAuth client secret cannot be read'),
+      text: o.bridge
+        ? t('Secret Manager did not return the connected client\'s secret, so Google sign-in goes through Identity-Aware Proxy for now. Connect the client again with its client secret.')
+        : t('Secret Manager did not return the connected client\'s secret, so Google sign-in is off for now. Connect the client again with its client secret.'),
+    }) : null;
+
+    const facts = o.clientId || o.connectedAt ? h('div', { class: 'row wrap' },
+      o.clientId ? h('span', { class: 'text-muted' }, t('Client ID')) : null,
+      o.clientId ? h('span', { class: 'cell-mono', style: { wordBreak: 'break-all' } }, o.clientId) : null,
+      o.connectedAt ? h('span', { class: 'text-muted' }, t('Connected by {who}, {when}', { who: o.connectedBy || DASH, when: fmt.dateTime(o.connectedAt) })) : null) : null;
+
+    // Connect form: console steps, the redirect URI to register, then the client ID and secret (checked by Google).
+    const idInput = textInput({ value: '', placeholder: '123456789012-abc123.apps.googleusercontent.com', mono: true, attrs: { 'aria-label': t('Client ID'), autocomplete: 'off', spellcheck: 'false', maxlength: 200 } });
+    const secretInput = textInput({ value: '', type: 'password', placeholder: 'GOCSPX-…', mono: true, attrs: { 'aria-label': t('Client secret'), autocomplete: 'off', spellcheck: 'false', maxlength: 200 } });
+    const formErr = h('div', { class: 'field-error', role: 'alert' });
+    const connectBtn = button({ label: t('Connect'), icon: 'key', variant: 'primary' });
+    const link = (page, label) => h('a', { href: consoleUrl(page), target: '_blank', rel: 'noopener noreferrer' }, label, ' ', icon('external', { size: 12 }));
+    const steps = h('ol', { class: 'stack-sm', style: { margin: '0', paddingLeft: '20px' } },
+      h('li', null, t('Branding: enter an app name (for example the dashboard name) and a support email, then save.'), ' ', link('branding', t('Open Branding'))),
+      h('li', null, t('Audience: choose External, then select Publish app so the status is In production.'), ' ', link('audience', t('Open Audience')),
+        h('div', { class: 'field-help' }, t('Internal admits your organization only, and Testing admits listed test users only. Only the basic sign-in scopes (email, profile) are used, so Google verification is not needed.'))),
+      h('li', null, t('Clients: Create client, application type Web application, add the redirect URI below under Authorized redirect URIs, then Create. Copy the client ID and client secret (the secret is shown only once).'), ' ', link('clients', t('Open Clients'))));
+    const form = h('div', { class: 'stack-sm', hidden: true, style: { paddingTop: '6px', borderTop: '1px solid var(--border)' } },
+      h('strong', null, t('Connect an OAuth client (one time, a few minutes in the Google Cloud console)')),
+      steps,
+      field({ label: t('Authorized redirect URI'), control: codeBlock(redirect, { wrap: true }), help: t('Register exactly this address on the client.') }),
+      h('div', { class: 'row wrap', style: { alignItems: 'flex-end' } },
+        h('div', { style: { flex: '1 1 320px', minWidth: '0' } }, field({ label: t('Client ID'), control: idInput })),
+        h('div', { style: { flex: '1 1 220px', minWidth: '0' } }, field({ label: t('Client secret'), control: secretInput })),
+        connectBtn),
+      h('span', { class: 'field-help' }, t('Google checks the client ID, the secret and the redirect URI before anything changes. The secret is kept in Secret Manager ({secret}) and is not shown again.', { secret: o.secret || 'Secret Manager' })),
+      formErr);
+    connectBtn.addEventListener('click', async () => {
+      formErr.textContent = '';
+      const clientId = idInput.value.trim();
+      const clientSecret = secretInput.value.trim();
+      if (!clientId) { idInput.focus(); return; }
+      if (!clientSecret) { secretInput.focus(); return; }
+      setBusy(connectBtn, true);
+      try {
+        const res = await api.post('/api/v1/access/oauth', { clientId, clientSecret });
+        secretInput.value = '';
+        toast({ tone: 'success', title: t('Google OAuth client connected'), text: t('Approved Google accounts, including accounts of other organizations, can now sign in with Google. Every dashboard instance switches within about 30 seconds.'), timeout: 9000 });
+        apply(res.data);
+      } catch (e) {
+        setBusy(connectBtn, false);
+        formErr.textContent = errorText(e);
+      }
+    });
+    [idInput, secretInput].forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') connectBtn.click(); }));
+
+    const actions = [];
+    if (editable && o.canConnect) {
+      const open = button({ label: o.active || o.secretUnreadable ? t('Replace client') : t('Connect OAuth client'), icon: o.active || o.secretUnreadable ? 'edit' : 'plus', size: 'sm', variant: o.active ? 'ghost' : 'primary' });
+      open.addEventListener('click', () => {
+        form.hidden = !form.hidden;
+        if (!form.hidden) setTimeout(() => idInput.focus(), 30);
+      });
+      actions.push(open);
+    }
+    if (editable && !deployment && (o.active || o.secretUnreadable)) {
+      const off = button({ label: t('Disconnect'), icon: 'x', size: 'sm', variant: 'ghost' });
+      off.addEventListener('click', async () => {
+        const ok = await confirmDialog({
+          title: t('Disconnect the OAuth client'),
+          message: o.bridge
+            ? t('Google sign-in goes back to Identity-Aware Proxy, which admits accounts of your organization only: accounts of other organizations can no longer sign in with Google. The stored client secret is deleted.')
+            : t('Google sign-in stops and people sign in with an ID and password. The stored client secret is deleted.'),
+          confirmLabel: t('Disconnect'),
+          tone: 'danger',
+        });
+        if (ok) await post('/api/v1/access/oauth/delete', {}, t('Google OAuth client disconnected'), off);
+      });
+      actions.push(off);
+    }
+
+    mount(oauthSlot, h('div', { class: 'stack-sm', style: { padding: '14px 16px', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', minWidth: '0' } },
+      h('div', { class: 'row between wrap' },
+        h('div', { class: 'row' }, icon('key', { size: 15 }), h('strong', null, t('Google OAuth client')), state),
+        actions.length ? h('div', { class: 'row' }, actions) : null),
+      h('span', { class: 'field-help' }, text),
+      unreadable,
+      facts,
+      editable && o.canConnect ? form : null));
+  }
+
   function iapBadge(u) {
     if (!u.iap) return null;
     if (u.iap === 'covered') return badge(t('Google sign-in ready'), 'success', { size: 'sm', title: t('Identity-Aware Proxy admits this account.') });
     if (u.iap === 'unknown') return badge(t('IAP not checked'), 'neutral', { size: 'sm' });
     if (u.iapLast && u.iapLast.result === 'rejected') {
-      return badge(t('Blocked by organization policy'), 'danger', { size: 'sm', title: t('Domain restricted sharing does not allow this account at IAP. Set a password for ID and password sign-in.') });
+      const title = lastOauth && lastOauth.canConnect
+        ? t('Domain restricted sharing does not allow this account at IAP. Connect a Google OAuth client above, or set a password for ID and password sign-in.')
+        : t('Domain restricted sharing does not allow this account at IAP. Set a password for ID and password sign-in.');
+      return badge(t('Blocked by organization policy'), 'danger', { size: 'sm', title });
     }
     return badge(t('Not allowed at IAP'), 'warning', { size: 'sm', title: t('Google sign-in stops at the IAP page. Select Sync approved accounts.') });
   }
@@ -1316,7 +1443,7 @@ export function accessMembers(ctx = {}, editable = true) {
                 ? h('span', { class: 'cell-sub' }, u.email === '*' ? t('Every Google account (Signed-in Viewer)') : t('Every account in this domain'))
                 : h('span', { class: 'cell-sub' },
                   u.defaultPassword
-                    ? t('ID / Password login (default password: admin)')
+                    ? t('ID / Password login (initial password in Secret Manager)')
                     : (u.hasPassword ? t('ID / Password login enabled') : t('Google OAuth sign-in'))))),
         },
         {

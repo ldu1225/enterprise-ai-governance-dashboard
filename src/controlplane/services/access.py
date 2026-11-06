@@ -21,7 +21,7 @@ from ..auth import hash_password
 from ..httpkit import ApiError, now_iso
 from ..security import admin_guard, is_admin_email, uid_for
 from ..settings_store import ACCOUNT_ID_RE
-from . import iap_access
+from . import iap_access, oauth_client
 
 LOG = logging.getLogger("controlplane.access")
 
@@ -159,7 +159,8 @@ def summary(ctx):
             if last and user["iap"] != "covered":
                 user["iapLast"] = last
     return {"authMode": ctx.identity.auth_mode, "users": users, "requests": requests,
-            "sessionHours": sec.get("session_hours"), "self": actor, "google": google}
+            "sessionHours": sec.get("session_hours"), "self": actor, "google": google,
+            "oauth": oauth_client.summary(ctx.app, oauth_client.redirect_uri(ctx.app))}
 
 
 def _save_lists(ctx, admins, allowed):
@@ -347,3 +348,22 @@ def allow_iap(ctx):
     LOG.info("IAP sign-in access requested kind=%s result=%s", "domain" if entry.startswith("*@") else "user",
              results[0]["result"] if results else "none")
     return _refreshed_summary(ctx, results)
+
+
+def connect_oauth(ctx, handler):
+    """POST /api/v1/access/oauth {clientId, clientSecret}: connects a Google OAuth client of this project so every
+    approved Google account can sign in, including accounts outside the organization. Google checks the client and the
+    redirect URI first; the secret goes to Secret Manager. No redeployment."""
+    redirect = oauth_client.redirect_uri(ctx.app, handler.headers)
+    if not redirect:
+        raise ApiError("bad_request", "The dashboard address is unknown. Set PUBLIC_BASE_URL and deploy again.")
+    oauth_client.connect(ctx.app, ctx.quota_project, ctx.identity.email, ctx.body.get("clientId"),
+                         ctx.body.get("clientSecret"), redirect)
+    return summary(ctx)
+
+
+def disconnect_oauth(ctx):
+    """POST /api/v1/access/oauth/delete: stops using the connected OAuth client (back to the IAP sign-in bridge, or
+    ID/password sign-in only when there is no bridge)."""
+    oauth_client.disconnect(ctx.app, ctx.quota_project, ctx.identity.email)
+    return summary(ctx)

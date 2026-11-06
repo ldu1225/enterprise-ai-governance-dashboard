@@ -252,6 +252,7 @@ SERVICE_ACCOUNT_ID="$(trim_ws "${SERVICE_ACCOUNT_ID:-${SERVICE_NAME:0:27}-sa}")"
 SETTINGS_BUCKET="$(trim_ws "${SETTINGS_BUCKET:-}")"
 SESSION_SECRET_NAME="$(trim_ws "${SESSION_SECRET_NAME:-${SERVICE_NAME}-session-secret}")"
 OAUTH_SECRET_NAME="$(trim_ws "${OAUTH_SECRET_NAME:-${SERVICE_NAME}-oauth-client-secret}")"
+OAUTH_CONNECT_SECRET_NAME="$(trim_ws "${OAUTH_CONNECT_SECRET_NAME:-${SERVICE_NAME}-oauth-connected-secret}")"
 ADMIN_SECRET_NAME="$(trim_ws "${ADMIN_SECRET_NAME:-${SERVICE_NAME}-admin-password}")"
 MEMORY="${MEMORY:-1Gi}"
 CPU="${CPU:-1}"
@@ -785,6 +786,30 @@ elif [[ -n "$GOOGLE_OAUTH_CLIENT_ID" ]] && gcloud secrets describe "$OAUTH_SECRE
   SECRETS="${SECRETS},GOOGLE_OAUTH_CLIENT_SECRET=${OAUTH_SECRET_NAME}:latest"
 fi
 
+# Google OAuth client connected later by an administrator (Settings > Access control), with no redeployment: lets
+# accounts outside the organization sign in with Google (IAP's Google-managed client admits the organization's own
+# accounts only). The dashboard adds the client secret as a version of this secret and reads it by exact version; its
+# service account may add, read and retire versions of this one secret and nothing else. Not used when the deployment
+# itself sets the OAuth client (ACCESS_MODE google_oauth or GOOGLE_OAUTH_CLIENT_ID).
+OAUTH_CONNECT_SECRET=""
+if [[ ("$ACCESS_MODE" == "google" || "$ACCESS_MODE" == "password") && "$SECRETS" != *GOOGLE_OAUTH_CLIENT_SECRET=* ]]; then
+  if ensure_secret_created "$OAUTH_CONNECT_SECRET_NAME" "$PROJECT_ID" "$REGION"; then
+    OAUTH_CONNECT_OK=1
+    for role in roles/secretmanager.secretVersionManager roles/secretmanager.secretAccessor; do
+      run retry gcloud secrets add-iam-policy-binding "$OAUTH_CONNECT_SECRET_NAME" --project "$PROJECT_ID" \
+        --member "serviceAccount:${SA_EMAIL}" --role "$role" --condition=None >/dev/null || OAUTH_CONNECT_OK=0
+    done
+    if [[ "$OAUTH_CONNECT_OK" == "1" ]]; then
+      OAUTH_CONNECT_SECRET="projects/${PROJECT_ID}/secrets/${OAUTH_CONNECT_SECRET_NAME}"
+      info "Google OAuth client connection ready (Settings > Access control; secret ${OAUTH_CONNECT_SECRET_NAME})"
+    else
+      warn "the dashboard's service account could not be granted access to ${OAUTH_CONNECT_SECRET_NAME}: connecting a Google OAuth client in Settings > Access control stays unavailable (Google sign-in through IAP and ID/password sign-in work)"
+    fi
+  else
+    warn "secret ${OAUTH_CONNECT_SECRET_NAME} could not be created: connecting a Google OAuth client in Settings > Access control stays unavailable (Google sign-in through IAP and ID/password sign-in work)"
+  fi
+fi
+
 # Built-in 'admin' account: a random initial password per deployment (there is no shared default such as admin/admin).
 # It is the way in when Google sign-in is unavailable (password-only fallback) and break-glass access otherwise; only
 # the dashboard service reads it (the sign-in bridge does not). Change it in Settings > Access control.
@@ -881,6 +906,7 @@ add_env ALLOWED_USERS "$ALLOWED_USERS"
 add_env GOOGLE_OAUTH_CLIENT_ID "$GOOGLE_OAUTH_CLIENT_ID"
 add_env GOOGLE_OAUTH_REDIRECT_URI "$GOOGLE_OAUTH_REDIRECT_URI"
 add_env GOOGLE_OAUTH_START_URL "$GOOGLE_OAUTH_START_URL"
+add_env OAUTH_CONNECT_SECRET "$OAUTH_CONNECT_SECRET"   # secret for an OAuth client connected in Settings > Access control
 if [[ "$GUEST_ACCESS" == "true" ]]; then
   add_env GUEST_ACCESS true
   add_env GUEST_REDACT_TERMS "$GUEST_REDACT_TERMS"
@@ -992,8 +1018,9 @@ case "$ACCESS_MODE" in
         --member "serviceAccount:${IAP_AGENT}" --role roles/run.invoker --condition=None >/dev/null
       # Who may pass IAP to sign in (organization-wide; the dashboard approves people). Refusals are reported, and the
       # dashboard's service account may update the policy when administrators approve accounts later. Accounts outside
-      # the organization need an ID/password account or ACCESS_MODE google_oauth with an OAuth client made in the
-      # console (README 5.4); IAP's OAuth Admin API, which could create clients programmatically, is shut down.
+      # the organization need an OAuth client made in the console and connected in Settings > Access control (no
+      # redeployment; OAUTH_CONNECT_SECRET above), or an ID/password account (README 5.4). Google offers no API that
+      # creates such clients (IAP's OAuth Admin API is shut down).
       configure_iap_access "$PROJECT_ID" "$PROJECT_NUMBER" "$REGION" "$BRIDGE_NAME" bridge "$BRIDGE_MEMBERS"
       grant_optional_role "$PROJECT_ID" "serviceAccount:${SA_EMAIL}" "roles/iap.admin"
       MAIN_ENV="${ENV_VARS}##AUTH_MODE=google##SIGN_IN_BRIDGE_URL=${BRIDGE_URL}##PUBLIC_BASE_URL=${BASE_URL}"
@@ -1125,6 +1152,9 @@ case "$EFFECTIVE_ACCESS_MODE" in
 esac
 if [[ "$EFFECTIVE_ACCESS_MODE" != "iap" ]]; then
   info "Admin password: ${ADMIN_PW_CMD}   (built-in 'admin' account; change it in Settings > Access control)"
+fi
+if [[ -n "$OAUTH_CONNECT_SECRET" && "$EFFECTIVE_ACCESS_MODE" != "iap" ]]; then
+  info "Google OAuth  : any approved Google account (other organizations, partners, Gmail) can sign in once an administrator connects an OAuth client in Settings > Access control (no redeployment). Redirect URI: ${BASE_URL}/auth/google/callback"
 fi
 iap_access_report
 if [[ "$IAP_FALLBACK" == "1" ]]; then
