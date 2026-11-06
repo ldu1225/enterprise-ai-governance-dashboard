@@ -157,7 +157,8 @@ class CheckClientTest(unittest.TestCase):
         with self.assertRaises(ApiError) as err:
             self.check(location=auth_error_location("redirect_uri_mismatch"))
         self.assertEqual(err.exception.message, "Add %s as an authorized redirect URI of this client (Google Auth "
-                                                "Platform > Clients > the client), save, and connect again." % self.URI)
+                                                "Platform > Clients > the client), save, and connect again. A change "
+                                                "saved a moment ago can take a few minutes to apply." % self.URI)
 
     def test_unknown_client(self):
         with self.assertRaises(ApiError) as err:

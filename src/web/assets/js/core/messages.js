@@ -67,7 +67,7 @@ const TEMPLATES = [
   [/^Mapping '(\w+)' must be a dotted path of identifiers\.$/, "Mapping '{a}' must be a dotted path of identifiers."],
   [/^Mapping '(\w+)' refers to a column that does not exist\.$/, "Mapping '{a}' refers to a column that does not exist."],
   // Google OAuth client connection
-  [/^Add (\S+) as an authorized redirect URI of this client \(Google Auth Platform > Clients > the client\), save, and connect again\.$/, 'Add {a} as an authorized redirect URI of this client (Google Auth Platform > Clients > the client), save, and connect again.'],
+  [/^Add (\S+) as an authorized redirect URI of this client \(Google Auth Platform > Clients > the client\), save, and connect again\. A change saved a moment ago can take a few minutes to apply\.$/, 'Add {a} as an authorized redirect URI of this client (Google Auth Platform > Clients > the client), save, and connect again. A change saved a moment ago can take a few minutes to apply.'],
 ];
 
 /*

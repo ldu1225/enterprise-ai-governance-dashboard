@@ -116,7 +116,8 @@ def check_client(client_id, client_secret, redirect_uri):
         pass
     if token_error in ("invalid_client", "unauthorized_client"):
         raise ApiError("bad_request", "Google rejected this client ID or client secret. Copy both again from the "
-                                      "client in Google Auth Platform > Clients.")
+                                      "client in Google Auth Platform > Clients. A client created a moment ago can "
+                                      "take a few minutes to become active.")
     reason = "unreachable"
     try:
         start = requests.get(AUTH_URL, params={"client_id": client_id, "redirect_uri": redirect_uri,
@@ -127,10 +128,12 @@ def check_client(client_id, client_secret, redirect_uri):
         pass
     if "redirect_uri_mismatch" in reason:
         raise ApiError("bad_request", "Add {uri} as an authorized redirect URI of this client (Google Auth Platform > "
-                                      "Clients > the client), save, and connect again.".format(uri=redirect_uri))
+                                      "Clients > the client), save, and connect again. A change saved a moment ago "
+                                      "can take a few minutes to apply.".format(uri=redirect_uri))
     if "invalid_client" in reason or "deleted_client" in reason:
         raise ApiError("bad_request", "Google does not know this client ID. Copy it again from Google Auth Platform "
-                                      "> Clients.")
+                                      "> Clients. A client created a moment ago can take a few minutes to become "
+                                      "active.")
     return {"token": token_error or "ok", "redirect": reason or "ok"}
 
 
