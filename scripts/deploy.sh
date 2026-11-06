@@ -894,6 +894,11 @@ add_env PRICING_CURRENCY "$PRICING_CURRENCY"
 add_env TELEMETRY_AI_MODEL "$TELEMETRY_AI_MODEL"
 add_env TELEMETRY_DATASET "$TELEMETRY_DATASET"
 add_env TELEMETRY_DATASET_LOCATION "$DATASET_LOCATION"   # routed telemetry stays in the allowed region
+# Primary domain of the project's organization: IAP's Google-managed OAuth client admits only its accounts, so the
+# sign-in bridge allows it and the sign-in page names it. Empty when the organization cannot be read.
+IAP_ORG_DOMAIN="$(iap_org_domain "$PROJECT_ID")"
+[[ -n "$IAP_ORG_DOMAIN" ]] && info "organization domain: ${IAP_ORG_DOMAIN}"
+add_env IAP_ORG_DOMAIN "$IAP_ORG_DOMAIN"
 COMMON=(--image "$IMAGE" --project "$PROJECT_ID" --region "$REGION" --cpu-boost --quiet)
 [[ -n "$ORGPOL_BINAUTHZ" ]] && COMMON+=(--binary-authorization "$ORGPOL_BINAUTHZ")
 [[ -n "$VPC_NETWORK" ]] && COMMON+=(--network "$VPC_NETWORK" --subnet "$VPC_SUBNET" --vpc-egress all-traffic)
@@ -903,45 +908,15 @@ RUN_DEPLOY_HELP="$(gcloud run deploy --help 2>&1 || true)"
 NO_IAP_ARGS=()
 [[ "$RUN_DEPLOY_HELP" == *"--no-iap"* || "$RUN_DEPLOY_HELP" == *"--iap"* ]] && NO_IAP_ARGS=(--no-iap)
 
-# Collects explicit user: and domain: IAP principals from ADMIN_EMAILS, ALLOWED_USERS and active ACCOUNT.
-bind_iap_principals() {  # bind_iap_principals SERVICE_NAME
-  local svc="$1" principals fallback_member
-  principals="$(python3 - "$ADMIN_EMAILS" "$ALLOWED_USERS" "$ACCOUNT" <<'PYIAP'
-import sys
-public_domains = {"gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com", "live.com", "icloud.com", "naver.com", "daum.net", "hanmail.net", "kakao.com"}
-seen = set()
-for raw in sys.argv[1:]:
-    for token in raw.split(","):
-        token = token.strip().lower()
-        if "@" not in token:
-            continue
-        domain = token.rpartition("@")[2]
-        cands = []
-        if domain and domain not in public_domains:
-            cands.append(f"domain:{domain}")
-        if not token.startswith("*@"):
-            cands.append(f"user:{token}")
-        for cand in cands:
-            if cand and cand not in seen:
-                seen.add(cand)
-                print(cand)
-PYIAP
-  )"
-  while IFS= read -r fallback_member; do
-    [[ -n "$fallback_member" ]] || continue
-    run gcloud iap web add-iam-policy-binding --resource-type=cloud-run --service="$svc" --region="$REGION" \
-      --project="$PROJECT_ID" --member="$fallback_member" --role=roles/iap.httpsResourceAccessor --condition=None >/dev/null 2>&1 \
-      && info "IAP access (${svc}): ${fallback_member}" || true
-  done <<<"$principals"
-}
-
 EFFECTIVE_ACCESS_MODE="$ACCESS_MODE"
+IAP_FALLBACK=0
 
 # Deploys the public-entry dashboard service (which enforces signed session cookies on every route).
 # 1) Tries --no-invoker-iam-check (succeeds under Domain Restricted Sharing without allUsers).
 # 2) Falls back to --allow-unauthenticated.
-# 3) If enterprise org policies block BOTH (--no-invoker-iam-check AND allUsers), automatically switches the
-#    main dashboard service to Direct Cloud Run IAP and binds ADMIN_EMAILS / ALLOWED_USERS / org domain!
+# 3) If enterprise org policies block BOTH (--no-invoker-iam-check AND allUsers), switches the dashboard itself to
+#    Direct Cloud Run IAP. IAP is then the allowlist: ADMIN_EMAILS / ALLOWED_USERS (and IAP_MEMBERS) are admitted, the
+#    dashboard adds accounts approved later, and the summary says so (ID/password sign-in sits behind IAP too).
 deploy_main_resilient() {
   local public_env="$1"
   if [[ "$DRY_RUN" == "1" ]]; then
@@ -973,8 +948,10 @@ deploy_main_resilient() {
     || die "Cloud Run deployment failed under all access modes for ${PROJECT_ID}"
   retry gcloud run services add-iam-policy-binding "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" \
     --member "serviceAccount:${IAP_AGENT}" --role roles/run.invoker --condition=None >/dev/null
-  bind_iap_principals "$SERVICE_NAME"
+  configure_iap_access "$PROJECT_ID" "$PROJECT_NUMBER" "$REGION" "$SERVICE_NAME" gate "$IAP_MEMBERS"
+  grant_optional_role "$PROJECT_ID" "serviceAccount:${SA_EMAIL}" "roles/iap.admin"
   EFFECTIVE_ACCESS_MODE="iap"
+  IAP_FALLBACK=1
 }
 
 BRIDGE_READY=0
@@ -1013,46 +990,15 @@ case "$ACCESS_MODE" in
     if [[ "$BRIDGE_READY" == "1" ]]; then
       run retry gcloud run services add-iam-policy-binding "$BRIDGE_NAME" --project "$PROJECT_ID" --region "$REGION" \
         --member "serviceAccount:${IAP_AGENT}" --role roles/run.invoker --condition=None >/dev/null
-      IFS=',' read -r -a members <<<"$BRIDGE_MEMBERS"
-      for member in ${members[@]+"${members[@]}"}; do
-        member="$(normalize_iam_member "$member")"
-        [[ -n "$member" ]] || continue
-        run gcloud iap web add-iam-policy-binding --resource-type=cloud-run --service="$BRIDGE_NAME" --region="$REGION" \
-          --project="$PROJECT_ID" --member="$member" --role=roles/iap.httpsResourceAccessor --condition=None >/dev/null 2>&1 || true
-      done
-      bind_iap_principals "$BRIDGE_NAME"
+      # Who may pass IAP to sign in (organization-wide; the dashboard approves people). Refusals are reported, and the
+      # dashboard's service account may update the policy when administrators approve accounts later. Accounts outside
+      # the organization need an ID/password account or ACCESS_MODE google_oauth with an OAuth client made in the
+      # console (README 5.4); IAP's OAuth Admin API, which could create clients programmatically, is shut down.
+      configure_iap_access "$PROJECT_ID" "$PROJECT_NUMBER" "$REGION" "$BRIDGE_NAME" bridge "$BRIDGE_MEMBERS"
       grant_optional_role "$PROJECT_ID" "serviceAccount:${SA_EMAIL}" "roles/iap.admin"
-      if [[ "$DRY_RUN" -eq 0 ]]; then
-        IAP_BRAND="projects/${PROJECT_NUMBER}/brands/${PROJECT_NUMBER}"
-        IAP_CLIENT_JSON="$(gcloud iap oauth-clients list "$IAP_BRAND" --project="$PROJECT_ID" --format=json 2>/dev/null || true)"
-        if [[ -z "$IAP_CLIENT_JSON" || "$IAP_CLIENT_JSON" == "[]" ]]; then
-          gcloud iap oauth-clients create "$IAP_BRAND" --display_name="${SERVICE_NAME}-iap" --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
-          IAP_CLIENT_JSON="$(gcloud iap oauth-clients list "$IAP_BRAND" --project="$PROJECT_ID" --format=json 2>/dev/null || true)"
-        fi
-        IAP_SETTINGS_FILE="$(mktemp)"
-        if python3 - "$IAP_CLIENT_JSON" "$IAP_SETTINGS_FILE" <<'PY' 2>/dev/null
-import json, sys
-try:
-    clients = json.loads((sys.argv[1] or "").strip() or "[]")
-except Exception:
-    sys.exit(1)
-if not isinstance(clients, list) or not clients:
-    sys.exit(1)
-c = clients[0]
-cid = c.get("name", "").rpartition("/")[2]
-secret = c.get("secret", "")
-if not cid or not secret:
-    sys.exit(1)
-with open(sys.argv[2], "w", encoding="utf-8") as fh:
-    fh.write(f"access_settings:\n  oauth_settings:\n    client_id: {cid}\n    client_secret: {secret}\n")
-PY
-        then
-          gcloud iap settings set "$IAP_SETTINGS_FILE" --project="$PROJECT_ID" --resource-type=cloud-run --region="$REGION" --service="$BRIDGE_NAME" --quiet >/dev/null 2>&1 \
-            && info "sign-in bridge custom IAP OAuth client configured" || true
-        fi
-        rm -f "$IAP_SETTINGS_FILE"
-      fi
       MAIN_ENV="${ENV_VARS}##AUTH_MODE=google##SIGN_IN_BRIDGE_URL=${BRIDGE_URL}##PUBLIC_BASE_URL=${BASE_URL}"
+      MAIN_ENV+="##IAP_ACCESS_RESOURCE=projects/${PROJECT_NUMBER}/iap_web/cloud_run-${REGION}/services/${BRIDGE_NAME}"
+      [[ -n "${IAP_OAUTH_CLIENT:-}" ]] && MAIN_ENV+="##IAP_OAUTH_CLIENT=${IAP_OAUTH_CLIENT}"
     else
       MAIN_ENV="${ENV_VARS}##AUTH_MODE=google##PUBLIC_BASE_URL=${BASE_URL}"
     fi
@@ -1071,15 +1017,8 @@ PY
       --set-env-vars "$IAP_ENV" --set-secrets "$MAIN_SECRETS"
     run retry gcloud run services add-iam-policy-binding "$SERVICE_NAME" --project "$PROJECT_ID" --region "$REGION" \
       --member "serviceAccount:${IAP_AGENT}" --role roles/run.invoker --condition=None >/dev/null
-    IFS=',' read -r -a members <<<"$IAP_MEMBERS"
-    for member in ${members[@]+"${members[@]}"}; do
-      member="$(normalize_iam_member "$member")"
-      [[ -n "$member" ]] || continue
-      run gcloud iap web add-iam-policy-binding --resource-type=cloud-run --service="$SERVICE_NAME" --region="$REGION" \
-        --project="$PROJECT_ID" --member="$member" --role=roles/iap.httpsResourceAccessor --condition=None >/dev/null 2>&1 \
-        && info "IAP access: ${member}" || true
-    done
-    bind_iap_principals "$SERVICE_NAME"
+    configure_iap_access "$PROJECT_ID" "$PROJECT_NUMBER" "$REGION" "$SERVICE_NAME" gate "$IAP_MEMBERS"
+    grant_optional_role "$PROJECT_ID" "serviceAccount:${SA_EMAIL}" "roles/iap.admin"
     ;;
 esac
 
@@ -1186,6 +1125,11 @@ case "$EFFECTIVE_ACCESS_MODE" in
 esac
 if [[ "$EFFECTIVE_ACCESS_MODE" != "iap" ]]; then
   info "Admin password: ${ADMIN_PW_CMD}   (built-in 'admin' account; change it in Settings > Access control)"
+fi
+iap_access_report
+if [[ "$IAP_FALLBACK" == "1" ]]; then
+  warn "Organization policies block a public entry, so the dashboard itself runs behind IAP: only accounts IAP admits can open it, and ID/password sign-in is not available. Add people under Settings > Access control or with the gcloud command above."
+  warn "[한국어 안내] 조직 정책(도메인 제한 공유 + run.managed.requireInvokerIam) 때문에 대시보드 자체를 IAP 뒤에 배포했습니다. IAP가 허용한 Google 계정만 대시보드를 열 수 있고 ID/비밀번호 로그인은 쓸 수 없습니다. 사람 추가: 설정 > 접근 제어, 또는 위 gcloud 명령."
 fi
 info "Audit dataset : ${PROJECT_ID}:${AUDIT_DATASET} (${DATASET_LOCATION}, Data Access=${ENABLE_DATA_ACCESS_LOGS}, GE Prompt Logging=${GE_PROMPT_LOGGING})"
 [[ -n "$NORMALIZED_SCAN_PROJECTS" ]] && info "Linked scan   : ${NORMALIZED_SCAN_PROJECTS}"

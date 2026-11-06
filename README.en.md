@@ -384,6 +384,36 @@ Turn it on only when anyone should be able to open a demo from a link. Keep it o
 - On top of viewer masking, every response to a guest hides whole e-mail domains, billing account IDs, 12-digit project numbers, resident registration, phone and card number formats, and the terms in `GUEST_REDACT_TERMS` (case-insensitive). If the terms are empty, the deploy script uses the terms in `.prepublish-terms`.
 - Real project data (metrics, agent names, costs) stays visible, so turn it on only for a demo project that may be shown publicly.
 
+### 5.4 When Google sign-in stops at the IAP page
+
+In `google` mode, Google sign-in first has to pass IAP (Identity-Aware Proxy) in front of the sign-in bridge. When IAP refuses an account, the user sees Google's "You don't have access" page instead of the dashboard, and the dashboard records no access request. IAP admits an account only when both of these hold:
+
+1. **IAP allowlist**: `roles/iap.httpsResourceAccessor` on the bridge service covers the account (`allAuthenticatedUsers`, `domain:company-domain`, `user:email` or a group). With the domain restricted sharing organization policy (`iam.allowedPolicyMemberDomains`), IAM refuses `allAuthenticatedUsers` and accounts of customers (Workspace / Cloud Identity) that the policy does not allow.
+2. **OAuth client**: Cloud Run IAP uses a Google-managed OAuth client by default, and that client signs in **only accounts of the organization the project belongs to**. Accounts of affiliates in another organization, partner accounts and personal Gmail accounts are stopped even when the allowlist names them.
+
+What the deploy script does:
+
+- Without domain restricted sharing, it allows `allAuthenticatedUsers` on the bridge (with the managed OAuth client this still admits organization accounts only).
+- With domain restricted sharing, it allows `domain:` bindings for the organization's primary domain and for the domains of `ADMIN_EMAILS` / `ALLOWED_USERS`, of people on the project IAM policy and of Gemini Enterprise license holders (public mail domains and google.com excluded).
+- `ADMIN_EMAILS` / `ALLOWED_USERS` are also allowed as `user:` bindings.
+- Nothing is refused silently. The **Google sign-in (IAP) check** at the end of the deployment lists who can pass, what was refused and why, and which OAuth client IAP uses.
+- The dashboard's service account gets `roles/iap.admin`, so accounts approved later in the UI are added to IAP automatically.
+
+In the UI (Settings > Access control > **Google sign-in (Identity-Aware Proxy)**):
+
+- Shows the domains and accounts IAP admits now and the OAuth client type (**Check again**).
+- **Allow Google sign-in** admits a company domain (for example `cymbal.example.com`) or one account at IAP. Accounts of an allowed domain can sign in with Google, and the ones not approved yet show up as access requests.
+- Approving an account also admits it at IAP, with a result per account: `Google sign-in ready`, `Not allowed at IAP` or `Blocked by organization policy`. **Sync approved accounts** applies every approved account again.
+- Changes can take a few minutes to apply.
+- The sign-in page says under the Google button which accounts work and what to do on "You don't have access" (choose another account, or ask for an ID and password).
+
+When accounts outside the organization need access (either one):
+
+1. **ID/password account** (works immediately): Settings > Access control > Add account, create an ID and password and hand them over. Domain restricted sharing and the OAuth client rule do not apply.
+2. **Keep Google sign-in**: create an OAuth client yourself (audience `External`) and deploy again with `ACCESS_MODE=google_oauth` (preparation steps in [5.1](#51-choosing-a-sign-in-method)). The dashboard then runs Google sign-in itself without IAP, so any approved Google account can sign in. A custom OAuth client on IAP also exists, but with domain restricted sharing outside accounts cannot be added to the IAP allowlist, so it does not help.
+
+When the dashboard itself runs behind IAP (domain restricted sharing together with `run.managed.requireInvokerIam`; the deployment says so at the end), the IAP allowlist is the access list. ID/password sign-in is not available, so add people in the UI or with `gcloud iap web add-iam-policy-binding`.
+
 ---
 
 ## 6. Connecting data sources
@@ -902,7 +932,8 @@ bq update --time_partitioning_expiration 10368000 PROJECT_ID:ge_analytics.modela
 | Symptom | What to check |
 |---|---|
 | `deploy.sh` fails at the Cloud Build step | `deploy.sh` creates a dedicated Cloud Build service account (it never depends on the legacy Compute Engine default SA) and falls back automatically to local/Cloud Shell Docker if Cloud Build is restricted by org policy. If both fail, verify billing and `cloudbuild.googleapis.com` / `artifactregistry.googleapis.com` permissions. |
-| Granting IAP access on the sign-in bridge fails | An organization policy (domain restricted sharing) blocks `allAuthenticatedUsers`. `deploy.sh` automatically falls back, or you can set `BRIDGE_MEMBERS="domain:example.com"`. |
+| Granting IAP access on the sign-in bridge fails | The **Google sign-in (IAP) check** at the end of the deployment lists what was refused and why. When domain restricted sharing blocks `allAuthenticatedUsers`, the organization, administrator, project member and Gemini Enterprise user domains are allowed instead. Add more in Settings > Access control > Google sign-in, or set `BRIDGE_MEMBERS="domain:example.com"` ([5.4](#54-when-google-sign-in-stops-at-the-iap-page)). |
+| Google sign-in shows Google's "You don't have access" page | IAP refused the account. Check that the account (or its domain) is in the Google sign-in list under Settings > Access control, and whether it is an account outside the organization (an affiliate in another organization, a partner, personal Gmail). Give outside accounts an ID and password, or use `google_oauth` mode ([5.4](#54-when-google-sign-in-stops-at-the-iap-page)). If the browser is signed in to another Google account, select **Use another Google account** on the sign-in page. |
 | Deployment with `--no-invoker-iam-check` fails | The organization policy `run.managed.requireInvokerIam` is turned on. `deploy.sh` automatically tries `--allow-unauthenticated` and Direct Cloud Run IAP (`ACCESS_MODE=iap`). |
 | IAP deployment fails (project without an organization) | Turn on IAP once in the Security tab of the Cloud Run console, then run again. |
 | "Access is not approved yet" after sign-in | An administrator approves the request in Settings > Access control, or adds the account to `ALLOWED_USERS`. |

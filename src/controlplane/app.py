@@ -52,6 +52,8 @@ _route("GET", "/api/v1/access", access.summary, admin_read=True, mask=False)
 _route("POST", "/api/v1/access/users", access.save_user, admin=True, mask=False)
 _route("POST", "/api/v1/access/users/delete", access.delete_user, admin=True, mask=False)
 _route("POST", "/api/v1/access/requests/dismiss", access.dismiss_request, admin=True, mask=False)
+_route("POST", "/api/v1/access/iap", access.allow_iap, admin=True, mask=False)
+_route("POST", "/api/v1/access/iap/sync", access.sync_iap, admin=True, mask=False)
 _route("GET", "/api/v1/health", system.health)
 # Viewers get the read-only settings view (deployment identifiers hidden, storage details reduced).
 _route("GET", "/api/v1/settings", system.settings_get, mask=False, viewer_view=system.settings_viewer_view)

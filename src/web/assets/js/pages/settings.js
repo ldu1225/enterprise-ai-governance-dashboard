@@ -1074,6 +1074,7 @@ export function accessMembers(ctx = {}, editable = true) {
   const inDrawer = Boolean(ctx && ctx.inDrawer);
   const rerender = (ctx && ctx.rerender) || (() => {});
   const requestsSlot = h('div', { class: 'access-requests' });
+  const googleSlot = h('div', { hidden: true });
   const tableSlot = h('div', { class: 'access-table-slot' }, skeleton('table'));
   const formError = h('div', { class: 'field-error', role: 'alert' });
   const emailInput = textInput({
@@ -1103,11 +1104,12 @@ export function accessMembers(ctx = {}, editable = true) {
     title: inDrawer ? null : t('Accounts & passwords'),
     subtitle: inDrawer ? null : t('Manage ID/Password accounts (including the built-in admin account) and approved Google accounts. Administrators can change settings; viewers have read-only access.'),
     bordered: !inDrawer,
-    body: h('div', { class: 'access-body' }, requestsSlot, editable ? addForm : null, tableSlot),
+    body: h('div', { class: 'access-body' }, googleSlot, requestsSlot, editable ? addForm : null, tableSlot),
   });
   c.emailInput = emailInput;
 
   const apply = (data) => {
+    renderGoogle(data);
     renderRequests(data);
     renderTable(data);
   };
@@ -1116,8 +1118,10 @@ export function accessMembers(ctx = {}, editable = true) {
     if (btn) setBusy(btn, true);
     try {
       const res = await api.post(path, payload);
-      toast({ title: okTitle, tone: 'success', timeout: 2600 });
+      if (okTitle) toast({ title: okTitle, tone: 'success', timeout: 2600 });
       apply(res.data);
+      const reported = reportIap(res.data && res.data.iapResults);
+      if (!okTitle && !reported) toast({ title: t('Google sign-in is already allowed'), text: t('Identity-Aware Proxy already admits every approved Google account.'), tone: 'success', timeout: 4000 });
       return true;
     } catch (e) {
       if (btn) setBusy(btn, false);
@@ -1125,6 +1129,104 @@ export function accessMembers(ctx = {}, editable = true) {
       return false;
     }
   };
+
+  /** Toasts for what IAP did with approved Google accounts (POST responses carry iapResults). */
+  function reportIap(results) {
+    if (!Array.isArray(results) || !results.length) return false;
+    const by = {};
+    results.forEach((r) => { (by[r.result] = by[r.result] || []).push(r.entry); });
+    const list = (arr) => (arr.length > 3 ? t('{names} and {n} more', { names: arr.slice(0, 3).join(', '), n: arr.length - 3 }) : arr.join(', '));
+    let shown = false;
+    if (by.added) {
+      toast({ tone: 'success', title: t('Google sign-in allowed at IAP'), text: t('{list} can now pass Identity-Aware Proxy. It can take a few minutes to apply.', { list: list(by.added) }), timeout: 7000 });
+      shown = true;
+    }
+    if (by.rejected) {
+      toast({ tone: 'danger', title: t('Google sign-in blocked by an organization policy'), text: t('Domain restricted sharing does not allow {list}, so Google sign-in stops at the IAP page. Set a password so they can sign in with ID and password.', { list: list(by.rejected) }), timeout: 14000 });
+      shown = true;
+    }
+    if (by.denied) {
+      toast({ tone: 'warning', title: t('IAP access was not changed'), text: t('The dashboard service account needs IAP Policy Admin (roles/iap.admin). Deploy again or grant the role, then select Sync approved accounts.'), timeout: 14000 });
+      shown = true;
+    }
+    if (by.invalid) {
+      toast({ tone: 'warning', title: t('Google account or domain not found'), text: t('IAP did not accept {list}. Check the spelling.', { list: list(by.invalid) }), timeout: 9000 });
+      shown = true;
+    }
+    if (by.failed) {
+      toast({ tone: 'warning', title: t('IAP access was not changed'), text: t('Changing IAP access for {list} failed. Select Sync approved accounts to try again.', { list: list(by.failed) }), timeout: 9000 });
+      shown = true;
+    }
+    return shown;
+  }
+
+  /** Google sign-in through Identity-Aware Proxy: who IAP admits, the OAuth client rule, and allow / sync actions. */
+  function renderGoogle(data) {
+    const g = data && data.google;
+    if (!g || !g.enabled) { mount(googleSlot); googleSlot.hidden = true; return; }
+    googleSlot.hidden = false;
+    const named = (g.domains || []).length + (g.users || []).length + (g.groups || []).length;
+    let state;
+    if (g.error) state = badge(t('Could not check'), 'warning', { size: 'sm' });
+    else if (g.open) state = badge(t('Whole organization'), 'success', { size: 'sm' });
+    else if (named) state = badge(t('{n} allowed', { n: named }), 'info', { size: 'sm' });
+    else state = badge(t('Nobody can sign in with Google'), 'danger', { size: 'sm' });
+
+    const chips = [];
+    if (g.open) chips.push(chip(t('Every Google account of the organization'), { title: 'allAuthenticatedUsers' }));
+    (g.domains || []).forEach((d) => chips.push(chip(`@${d}`, { title: `domain:${d}` })));
+    (g.users || []).forEach((u) => chips.push(chip(u, { title: `user:${u}` })));
+    (g.groups || []).forEach((gr) => chips.push(chip(t('Group {name}', { name: gr }), { title: `group:${gr}` })));
+
+    let oauthText;
+    if (g.oauth === 'custom') {
+      oauthText = t('A custom OAuth client is set on IAP: accounts outside your organization can also sign in when IAP admits them.');
+    } else if (g.orgDomain) {
+      oauthText = t('IAP uses the Google-managed OAuth client: only accounts of your organization ({domain}) can sign in with Google. Accounts of other organizations and personal accounts (partners, Gmail) stop at the IAP page; give them an ID and password.', { domain: g.orgDomain });
+    } else {
+      oauthText = t('IAP uses the Google-managed OAuth client: only accounts of this project\'s organization can sign in with Google. Accounts of other organizations and personal accounts (partners, Gmail) stop at the IAP page; give them an ID and password.');
+    }
+
+    const recheck = button({ label: t('Check again'), icon: 'refresh', size: 'sm', variant: 'ghost' });
+    recheck.addEventListener('click', () => load(true, recheck));
+    const syncBtn = editable ? button({ label: t('Sync approved accounts'), icon: 'user-check', size: 'sm' }) : null;
+    if (syncBtn) syncBtn.addEventListener('click', () => post('/api/v1/access/iap/sync', {}, null, syncBtn));
+    const allowInput = textInput({ value: '', placeholder: 'example.com, user@example.com', mono: true, attrs: { 'aria-label': t('Domain or Google account'), autocomplete: 'off', spellcheck: 'false', maxlength: 254 } });
+    const allowBtn = button({ label: t('Allow Google sign-in'), icon: 'plus', size: 'sm', variant: 'primary' });
+    allowBtn.addEventListener('click', async () => {
+      const value = allowInput.value.trim();
+      if (!value) { allowInput.focus(); return; }
+      const done = await post('/api/v1/access/iap', { member: value }, null, allowBtn);
+      if (done) { setBusy(allowBtn, false); allowInput.value = ''; }
+    });
+    allowInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') allowBtn.click(); });
+    const errBanner = g.error ? banner({
+      tone: 'warning',
+      title: t('IAP access could not be read'),
+      text: g.error === 'denied'
+        ? t('The dashboard service account needs IAP Policy Admin (roles/iap.admin) on this project. Deploy again or grant the role.')
+        : t('Try again in a moment.'),
+    }) : null;
+    mount(googleSlot, h('div', { class: 'stack-sm', style: { padding: '14px 16px', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', minWidth: '0' } },
+      h('div', { class: 'row between wrap' },
+        h('div', { class: 'row' }, icon('shield', { size: 15 }), h('strong', null, t('Google sign-in (Identity-Aware Proxy)')), state),
+        h('div', { class: 'row' }, recheck, syncBtn)),
+      h('span', { class: 'field-help' }, oauthText),
+      errBanner,
+      h('div', { class: 'row wrap' }, h('span', { class: 'text-muted' }, t('Can sign in with Google:')), chips.length ? chips : h('span', { class: 'text-muted' }, t('Nobody yet'))),
+      editable ? h('div', { class: 'row', style: { maxWidth: '620px' } }, h('div', { style: { flex: '1 1 auto', minWidth: '0' } }, allowInput), allowBtn) : null,
+      editable ? h('span', { class: 'field-help' }, t('Allow your company domain once: its accounts can then sign in with Google, and accounts that are not approved yet appear as access requests. Changes can take a few minutes to apply.')) : null));
+  }
+
+  function iapBadge(u) {
+    if (!u.iap) return null;
+    if (u.iap === 'covered') return badge(t('Google sign-in ready'), 'success', { size: 'sm', title: t('Identity-Aware Proxy admits this account.') });
+    if (u.iap === 'unknown') return badge(t('IAP not checked'), 'neutral', { size: 'sm' });
+    if (u.iapLast && u.iapLast.result === 'rejected') {
+      return badge(t('Blocked by organization policy'), 'danger', { size: 'sm', title: t('Domain restricted sharing does not allow this account at IAP. Set a password for ID and password sign-in.') });
+    }
+    return badge(t('Not allowed at IAP'), 'warning', { size: 'sm', title: t('Google sign-in stops at the IAP page. Select Sync approved accounts.') });
+  }
 
   addBtn.addEventListener('click', async () => {
     formError.textContent = '';
@@ -1228,21 +1330,24 @@ export function accessMembers(ctx = {}, editable = true) {
               }
               const done = await post('/api/v1/access/users', { email: u.email, role: v }, t('Role updated'));
               if (!done) renderTable(data);
-            }, { 'aria-label': t('Role for {email}', { email: u.email }) });
+            }, { 'aria-label': t('Role for {email}', { email: u.email }), style: { minWidth: '108px' } });
           },
         },
         {
           key: 'source', label: t('Auth / Source'), width: '140px',
           render: (u) => {
+            let main;
             if (u.source === 'builtin') {
-              return badge(u.defaultPassword ? t('Initial password (Secret Manager)') : t('Built-in Admin'), u.defaultPassword ? 'warning' : 'accent', { size: 'sm' });
+              main = badge(u.defaultPassword ? t('Initial password (Secret Manager)') : t('Built-in Admin'), u.defaultPassword ? 'warning' : 'accent', { size: 'sm' });
+            } else if (u.hasPassword) {
+              main = badge(t('ID / Password'), 'success', { size: 'sm' });
+            } else {
+              main = u.source === 'config'
+                ? badge(t('Deployment config'), 'neutral', { size: 'sm', title: t('Defined in config.yaml or environment variables') })
+                : badge(t('Google OAuth'), 'info', { size: 'sm' });
             }
-            if (u.hasPassword) {
-              return badge(t('ID / Password'), 'success', { size: 'sm' });
-            }
-            return u.source === 'config'
-              ? badge(t('Deployment config'), 'neutral', { size: 'sm', title: t('Defined in config.yaml or environment variables') })
-              : badge(t('Google OAuth'), 'info', { size: 'sm' });
+            const gate = iapBadge(u);
+            return gate ? h('div', { class: 'stack-sm', style: { justifyItems: 'start' } }, main, gate) : main;
           },
         },
         {
@@ -1279,12 +1384,14 @@ export function accessMembers(ctx = {}, editable = true) {
     }));
   }
 
-  const load = async () => {
+  const load = async (refresh = false, btn = null) => {
+    if (btn) setBusy(btn, true);
     try {
-      const res = await api.get('/api/v1/access', null, signal ? { signal } : undefined);
+      const res = await api.get('/api/v1/access', refresh ? { refresh: '1' } : null, signal ? { signal } : undefined);
       if (!signal || !signal.aborted) apply(res.data);
     } catch (err) {
       if (isAbort(err) || (signal && signal.aborted)) return;
+      if (btn) setBusy(btn, false);
       mount(tableSlot, errorState(err, { onRetry: () => { mount(tableSlot, skeleton('table')); load(); rerender(); }, compact: true }));
     }
   };

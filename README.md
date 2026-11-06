@@ -379,6 +379,36 @@ sequenceDiagram
 - 게스트가 받는 모든 응답에는 viewer 마스킹에 더해 다음이 적용됩니다: 이메일 도메인 전체, 결제 계정 ID, 12자리 프로젝트 번호, 주민번호·전화번호·카드번호 형식, `GUEST_REDACT_TERMS`의 단어(대소문자 무시). 단어를 비워 두면 배포 스크립트가 `.prepublish-terms`의 단어를 씁니다.
 - 실제 프로젝트 데이터(지표, 에이전트 이름, 비용)는 그대로 보이므로, 공개해도 되는 데모 프로젝트에서만 켭니다.
 
+### 5.4 Google 로그인이 IAP 화면에서 막힐 때
+
+`google` 방식의 Google 로그인은 로그인 브리지 앞의 IAP(Identity-Aware Proxy)를 먼저 통과해야 합니다. IAP가 막으면 대시보드가 아니라 Google의 "You don't have access" 화면이 나오고, 대시보드에는 접근 요청도 남지 않습니다. IAP가 계정을 통과시키는 조건은 두 가지입니다.
+
+1. **IAP 허용 목록**: 브리지 서비스의 `roles/iap.httpsResourceAccessor`가 그 계정을 포함해야 합니다(`allAuthenticatedUsers`, `domain:회사도메인`, `user:이메일`, 그룹). 도메인 제한 공유(`iam.allowedPolicyMemberDomains`) 조직 정책이 있으면 IAM이 `allAuthenticatedUsers`와 허용되지 않은 고객(Workspace/Cloud Identity)의 계정을 거부합니다.
+2. **OAuth 클라이언트**: Cloud Run IAP는 기본으로 Google 관리형 OAuth 클라이언트를 쓰고, 이 클라이언트는 **이 프로젝트가 속한 조직의 계정만** 로그인시킵니다. 다른 조직의 계열사 계정, 협력사 계정, 개인 Gmail은 IAP 허용 목록에 있어도 막힙니다.
+
+배포 스크립트가 하는 일:
+
+- 도메인 제한 공유가 없으면 브리지에 `allAuthenticatedUsers`를 허용합니다(관리형 OAuth이므로 실제로는 조직 계정만 통과).
+- 도메인 제한 공유가 있으면 조직 기본 도메인, `ADMIN_EMAILS`·`ALLOWED_USERS`의 도메인, 프로젝트 IAM 구성원의 도메인, Gemini Enterprise 라이선스 사용자의 도메인을 `domain:`으로 허용합니다(공용 메일 도메인과 google.com 제외).
+- `ADMIN_EMAILS`·`ALLOWED_USERS`는 `user:`로도 허용합니다.
+- 거부된 항목을 숨기지 않습니다. 배포 마지막의 **Google 로그인(IAP) 점검**에 통과 가능한 도메인·계정, 거부된 항목과 이유, OAuth 클라이언트 종류가 나옵니다.
+- 대시보드 서비스 계정에 `roles/iap.admin`을 줍니다. 이후 화면에서 승인한 계정도 IAP에 자동으로 추가됩니다.
+
+화면(설정 > 접근 제어 > **Google 로그인 (Identity-Aware Proxy)**):
+
+- IAP가 지금 허용하는 도메인·계정과 OAuth 클라이언트 종류를 보여 줍니다(**다시 확인**).
+- **Google 로그인 허용**에 회사 도메인(예: `cymbal.example.com`)이나 계정을 넣으면 IAP에 허용합니다. 도메인을 허용하면 그 도메인 사람은 Google로 로그인할 수 있고, 아직 승인되지 않은 사람은 접근 요청으로 들어옵니다.
+- 계정을 승인하면 IAP에도 추가되고, 계정마다 결과가 표시됩니다: `Google 로그인 가능`, `IAP 미허용`, `조직 정책으로 차단`. **승인 계정 동기화**는 승인된 계정 전체를 다시 반영합니다.
+- 반영까지 몇 분 걸릴 수 있습니다.
+- 로그인 화면은 Google 버튼 아래에 어떤 계정이 되는지와, "You don't have access"가 나올 때 할 일(다른 계정 선택, ID/비밀번호 요청)을 안내합니다.
+
+조직 밖 계정이 들어와야 할 때(둘 중 하나):
+
+1. **ID/비밀번호 계정** (바로 됨): 설정 > 접근 제어 > 계정 추가에서 ID와 비밀번호를 만들어 전달합니다. 도메인 제한 공유와 OAuth 클라이언트 제약을 받지 않습니다.
+2. **Google 로그인 유지**: OAuth 클라이언트를 직접 만들어(대상 `외부`) `ACCESS_MODE=google_oauth`로 다시 배포합니다([5.1](#51-로그인-방식-선택)의 준비 단계). 대시보드가 Google 로그인을 직접 처리하므로 IAP를 거치지 않고, 승인 목록에 있는 어떤 Google 계정이든 로그인할 수 있습니다. IAP에 맞춤 OAuth 클라이언트를 다는 방법도 있지만, 도메인 제한 공유가 있으면 조직 밖 계정을 IAP 허용 목록에 넣을 수 없어 효과가 없습니다.
+
+대시보드 자체가 IAP 뒤에 배포된 경우(도메인 제한 공유와 `run.managed.requireInvokerIam`이 함께 있을 때, 배포 마지막에 안내): IAP 허용 목록이 곧 접근 목록입니다. ID/비밀번호 로그인은 쓸 수 없으므로 사람을 화면이나 `gcloud iap web add-iam-policy-binding`으로 추가합니다.
+
 ---
 
 ## 6. 데이터 소스 연결
@@ -893,7 +923,8 @@ bq update --time_partitioning_expiration 10368000 PROJECT_ID:ge_analytics.modela
 | 증상 | 확인할 점 |
 |---|---|
 | `deploy.sh`가 Cloud Build 단계에서 제한됨 | 스크립트는 전용 빌더 SA(`SERVICE_NAME-build`)로 리전 Cloud Build -> 글로벌 Cloud Build -> Cloud Shell/로컬 Docker 순서로 자동 전환합니다. 세 경로가 모두 막힌 환경이면 미리 빌드한 이미지를 `IMAGE`에 지정합니다. |
-| 로그인 브리지 IAP 권한 부여 실패 | 조직 정책(도메인 제한 공유)이 `allAuthenticatedUsers`를 막으면 관리자·뷰어 도메인을 자동으로 바인딩하며, 필요하면 `BRIDGE_MEMBERS="domain:example.com"`으로 지정합니다. |
+| 로그인 브리지 IAP 권한 부여 실패 | 배포 마지막 **Google 로그인(IAP) 점검**에 거부된 항목과 이유가 나옵니다. 도메인 제한 공유가 `allAuthenticatedUsers`를 막으면 조직·관리자·프로젝트 구성원·Gemini Enterprise 사용자 도메인을 대신 허용합니다. 더 필요하면 설정 > 접근 제어 > Google 로그인에서 도메인을 추가하거나 `BRIDGE_MEMBERS="domain:example.com"`으로 지정합니다([5.4](#54-google-로그인이-iap-화면에서-막힐-때)). |
+| Google 로그인하면 Google의 "You don't have access" 화면 | IAP가 막은 것입니다. 그 계정(도메인)이 설정 > 접근 제어 > Google 로그인 목록에 있는지, 조직 밖 계정(다른 조직의 계열사, 협력사, 개인 Gmail)인지 확인합니다. 조직 밖 계정은 ID/비밀번호 계정을 주거나 `google_oauth` 방식을 씁니다([5.4](#54-google-로그인이-iap-화면에서-막힐-때)). 브라우저에 다른 Google 계정으로 로그인되어 있으면 로그인 화면의 **다른 Google 계정으로 로그인**을 누릅니다. |
 | `--no-invoker-iam-check` 배포 실패 | 조직 정책이 비인증 진입을 막으면 스크립트가 자동으로 Direct Cloud Run IAP 모드로 전환해 배포합니다. |
 | IAP 배포 실패(조직 없는 프로젝트) | Cloud Run 콘솔의 보안 탭에서 IAP를 한 번 켠 뒤 다시 실행하거나 `ACCESS_MODE=password`를 씁니다. |
 | 로그인 후 "승인되지 않은 계정" | 관리자가 설정 > 액세스 제어에서 요청을 승인하거나 `ALLOWED_USERS`에 추가합니다. |
