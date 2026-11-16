@@ -59,9 +59,18 @@ function renderPage(ctx, body, d) {
     body.append(banner({ tone: 'warning', title: t('IAM state unavailable'), text: t('The project IAM policy could not be read, so enforcement states are shown as Unknown. Grant the control plane identity resourcemanager.projects.getIamPolicy.') }));
   }
 
+  const effectiveState = (u) => ((u.iam && u.iam.aiBlocked && u.iam.aiBlocked.active) ? 'ALL_AI_BLOCKED' : ((u.iam && u.iam.state) || 'UNKNOWN'));
   const counts = {};
-  users.forEach((u) => { const s = (u.iam && u.iam.state) || 'UNKNOWN'; counts[s] = (counts[s] || 0) + 1; });
-  const segments = Object.keys(IAM_STATE_LABELS).map((s) => ({ label: t(IAM_STATE_LABELS[s]), value: counts[s] || 0, color: IAM_STATE_COLORS[s] }));
+  users.forEach((u) => { const s = effectiveState(u); counts[s] = (counts[s] || 0) + 1; });
+  const stateDefs = [
+    ...Object.keys(IAM_STATE_LABELS).map((s) => ({
+      key: s,
+      label: s === 'BLOCKED_BY_ADMIN' ? t('Antigravity blocked') : t(IAM_STATE_LABELS[s]),
+      color: IAM_STATE_COLORS[s],
+    })),
+    { key: 'ALL_AI_BLOCKED', label: t('All AI blocked'), color: IAM_STATE_COLORS.BLOCKED_BY_ADMIN },
+  ];
+  const segments = stateDefs.map((d0) => ({ label: d0.label, value: counts[d0.key] || 0, color: d0.color }));
   body.append(card({
     title: t('Access enforcement states'), subtitle: t('Classification of each user against the project IAM policy'),
     body: Array.isArray(d.users) ? h('div', null,
@@ -78,11 +87,11 @@ function renderPage(ctx, body, d) {
   const tableHost = h('div');
   const renderChips = () => mount(chips, SURFACES.map(([v, l]) => chip(t(l), { pressed: filters.surface === v, onClick: () => { filters.surface = v; renderChips(); renderTable(); } })));
   const stateSelect = selectInput(
-    [{ value: 'all', label: t('All access states') }, ...Object.keys(IAM_STATE_LABELS).map((s) => ({ value: s, label: t(IAM_STATE_LABELS[s]) }))],
+    [{ value: 'all', label: t('All access states') }, ...stateDefs.map((d0) => ({ value: d0.key, label: d0.label }))],
     'all', (v) => { filters.state = v; renderTable(); }, { 'aria-label': t('Access state') });
   const renderTable = () => {
     const rows = users.filter((u) => (filters.surface === 'all' || (u.surfaces || []).includes(filters.surface))
-      && (filters.state === 'all' || (u.iam && u.iam.state) === filters.state));
+      && (filters.state === 'all' || effectiveState(u) === filters.state));
     mount(tableHost, dataTable({
       columns: [
         { key: 'email', label: t('User'), render: (u) => userCell(u.email) },
@@ -93,7 +102,7 @@ function renderPage(ctx, body, d) {
         { key: 'antigravityTokens', label: t('AG tokens'), align: 'num', format: fmt.compact },
         { key: 'agentPlatformCalls', label: t('Agent Platform calls'), align: 'num', format: fmt.int },
         { key: 'armorBlocks', label: t('Blocks'), align: 'num', render: (u) => (u.armorBlocks ? h('span', { class: 'text-danger fw-600' }, fmt.int(u.armorBlocks)) : fmt.int(u.armorBlocks || 0)), value: (u) => u.armorBlocks },
-        { key: 'iam', label: t('Access state'), render: (u) => iamBadge(u.iam), value: (u) => (u.iam && u.iam.state) || '', csv: (u) => (u.iam && u.iam.state) || '' },
+        { key: 'iam', label: t('IAM / AI status'), render: (u) => iamBadge(u.iam, { surfaceContext: 'users' }), value: (u) => effectiveState(u), csv: (u) => effectiveState(u) },
         { key: 'lastActive', label: t('Last active'), render: (u) => (u.lastActive ? fmt.relative(u.lastActive) : DASH), value: (u) => u.lastActive },
       ],
       rows: d.users === null ? null : rows, pageSize: 15, exportName: 'users-access', initialSort: { key: 'gePrompts', dir: 'desc' },

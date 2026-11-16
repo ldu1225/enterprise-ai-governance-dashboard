@@ -285,11 +285,12 @@ def guest_identity(headers, peer):
     return Identity("", "viewer", GUEST_MODE, "guest:%s" % client_key(headers, peer))
 
 
-def authenticate(headers, peer, settings, verifier, environ=None, sessions=None):
+def authenticate(headers, peer, settings, verifier, environ=None, sessions=None, settings_mgr=None):
     """Resolves the caller identity for one request. Fails closed."""
     sec = settings.get("security", {})
     mode = resolve_auth_mode(sec.get("auth_mode"), environ)
     admins = sec.get("admins") or []
+    mgr = settings_mgr or getattr(sessions, "settings", None)
     if mode == "google":
         user = sessions.user_from_headers(headers, settings) if sessions is not None else None
         if user is None:
@@ -308,6 +309,8 @@ def authenticate(headers, peer, settings, verifier, environ=None, sessions=None)
         except Exception as err:  # pylint: disable=broad-except
             LOG.warning("IAP assertion rejected reason=%s", type(err).__name__)
             raise ApiError("unauthenticated", "Authentication is required.")
+        if mgr is not None and mgr.is_blocked(email) and not is_admin_email(email, admins):
+            raise ApiError("forbidden", "Access to this workspace has been blocked by an administrator.")
         role = "admin" if is_admin_email(email, admins) else "viewer"
         return Identity(email, role, mode, "iap:" + email)
     if mode == "local":

@@ -36,7 +36,7 @@ ACCOUNT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._@\-]{1,127}$")
 # its client secret (the secret value never enters the settings store).
 OAUTH_CLIENT_ID_RE = re.compile(r"^[0-9]{6,32}-[a-z0-9]{8,64}\.apps\.googleusercontent\.com$")
 SECRET_VERSION_RE = re.compile(r"^projects/[A-Za-z0-9._:-]{1,64}/secrets/[A-Za-z0-9_-]{1,255}/versions/[0-9]{1,12}$")
-EMPTY_AUTH = {"requests": [], "lastLogin": {}, "revoked": {}, "accounts": {}}
+EMPTY_AUTH = {"requests": [], "lastLogin": {}, "revoked": {}, "accounts": {}, "blocked": {}}
 EMPTY_GOVERNANCE = {"exceptions": [], "suspensions": [], "notified": {}, "lastRun": None, "lastScheduledRun": None}
 EMPTY_PRICING = {"syncedAt": None, "syncedBy": None, "trigger": None, "fx": None, "models": {}, "unitPrices": [],
                  "sources": [], "alerts": [], "lastError": None, "catalogServices": [], "storage": None}
@@ -53,6 +53,17 @@ CAP_REASONS = ("tokens", "requests", "cost", "budget", "credit", "paid")
 
 def _valid_account_key(key):
     return isinstance(key, str) and bool(config.EMAIL_RE.match(key) or ACCOUNT_ID_RE.match(key))
+
+
+def _clean_roles(values, limit=40):
+    if not isinstance(values, list):
+        return []
+    out = []
+    for item in values[:limit]:
+        role = str(item or "").strip()
+        if config.ROLE_RE.match(role) and role not in out:
+            out.append(role)
+    return out
 
 
 def sanitize_auth(auth):
@@ -89,7 +100,19 @@ def sanitize_auth(auth):
         name = str(meta.get("name") or "")[:120]
         updated_at = str(meta.get("updatedAt") or "")[:40]
         accounts[key] = {"role": role, "passwordHash": pw_hash, "name": name, "updatedAt": updated_at}
-    out = {"requests": requests, "lastLogin": last_login, "revoked": revoked, "accounts": accounts}
+    blocked = {}
+    for email, meta in list((auth.get("blocked") or {}).items())[-MAX_AUTH_ENTRIES:]:
+        key = str(email or "").strip().lower()
+        if not _valid_account_key(key) or not isinstance(meta, dict):
+            continue
+        blocked[key] = {
+            "at": str(meta.get("at") or "")[:40],
+            "by": str(meta.get("by") or "")[:254],
+            "note": str(meta.get("note") or "")[:200],
+            "removedRoles": _clean_roles(meta.get("removedRoles")),
+            "restoreRoles": _clean_roles(meta.get("restoreRoles")),
+        }
+    out = {"requests": requests, "lastLogin": last_login, "revoked": revoked, "accounts": accounts, "blocked": blocked}
     oauth = auth.get("oauth")
     if isinstance(oauth, dict) and OAUTH_CLIENT_ID_RE.match(str(oauth.get("clientId") or "")) and \
             SECRET_VERSION_RE.match(str(oauth.get("secretVersion") or "")):
@@ -777,6 +800,17 @@ class SettingsManager:
     def auth_state(self):
         with self._lock:
             return copy.deepcopy(self._doc.get("auth") or EMPTY_AUTH)
+
+    def blocked_accounts(self):
+        with self._lock:
+            return copy.deepcopy(((self._doc.get("auth") or {}).get("blocked")) or {})
+
+    def is_blocked(self, email):
+        key = str(email or "").strip().lower()
+        if not key:
+            return False
+        with self._lock:
+            return key in (((self._doc.get("auth") or {}).get("blocked")) or {})
 
     def revoked_at(self, email):
         """Epoch (ms) before which sessions of this account are invalid; 0 when never revoked."""

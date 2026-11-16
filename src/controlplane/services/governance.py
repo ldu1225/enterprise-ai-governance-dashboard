@@ -27,6 +27,7 @@ import datetime as dt
 import logging
 import math
 import threading
+import time
 import urllib.parse
 from dataclasses import dataclass, field
 
@@ -34,7 +35,7 @@ from .. import config, timeutil
 from ..gcp import GcpError
 from ..httpkit import ApiError
 from ..schema import expr, quote_ident
-from ..security import is_human, uid_for
+from ..security import is_admin_email, is_human, uid_for
 from ..settings_store import EMPTY_GOVERNANCE
 from . import credit_ledger
 from .base import AGY_SINK, iso, parse_rfc3339, to_int
@@ -84,6 +85,16 @@ _WRITE_LOCK = threading.Lock()
 # Configuration and policy index (pure)
 # ---------------------------------------------------------------------------
 
+# In Google Cloud IAM, roles/discoveryengine.user ("Discovery Engine User") has the exact same 135 permissions as
+# roles/discoveryengine.agentspaceUser ("Gemini Enterprise User"), including every businessaicode.* permission.
+# Administrators often grant one or both in the console. roles/businessaicode.user (9 permissions) is a strict subset
+# whose non-businessaicode.* permissions are also in the marker roles, whereas roles/discoveryengine.podcastApiUser
+# adds podcast permissions that a marker role would drop.
+EQUIVALENT_ACCESS_ROLES = ("roles/discoveryengine.agentspaceUser", "roles/discoveryengine.user")
+SUBSET_ACCESS_ROLES = ("roles/businessaicode.user",)
+BUILTIN_EXTRA_ACCESS_ROLES = ("roles/discoveryengine.podcastApiUser",)
+
+
 @dataclass(frozen=True)
 class GovConfig:
     project: str
@@ -101,6 +112,27 @@ class GovConfig:
     @property
     def markers(self):
         return {self.cap_marker, self.admin_marker, *self.legacy_markers}
+
+    @property
+    def access_roles(self):
+        if self.access_role in EQUIVALENT_ACCESS_ROLES:
+            return (self.access_role, *(r for r in EQUIVALENT_ACCESS_ROLES if r != self.access_role))
+        return (self.access_role,)
+
+    @property
+    def replaceable_roles(self):
+        if self.access_role in EQUIVALENT_ACCESS_ROLES:
+            return (*self.access_roles, *SUBSET_ACCESS_ROLES)
+        return self.access_roles
+
+    @property
+    def all_extra_access_roles(self):
+        own = set(self.access_roles) | set(self.privileged_roles) | self.markers
+        out = list(self.extra_access_roles)
+        for role in BUILTIN_EXTRA_ACCESS_ROLES:
+            if role not in own and role not in out:
+                out.append(role)
+        return tuple(out)
 
 
 def utcnow():
@@ -426,14 +458,20 @@ def classify(email, has_usage, idx, cfg, ancestor_check=None):
     roles = {role for role, _ in direct}
     if roles & set(cfg.privileged_roles):
         return NE, "PRIVILEGED_ROLE"
-    if roles & set(cfg.extra_access_roles):
+    if roles & set(cfg.all_extra_access_roles):
         return NE, "OTHER_ACCESS_ROLE"
     markers = cfg.markers
-    has_access = cfg.access_role in roles
+    access_set = set(cfg.access_roles)
+    subset_only = SUBSET_ACCESS_ROLES if cfg.access_role in EQUIVALENT_ACCESS_ROLES else ()
+    has_access = bool(roles & access_set)
+    has_subset = bool(roles & set(subset_only))
     has_marker = bool(roles & markers)
-    conditional = any(cond for role, cond in direct if role == cfg.access_role or role in markers)
-    if (has_access and has_marker) or conditional:
+    managed = access_set | set(subset_only) | markers
+    conditional = any(cond for role, cond in direct if role in managed)
+    if ((has_access or has_subset) and has_marker) or conditional:
         return NE, "CONFLICTING_BINDINGS"
+    if has_subset and not has_access:
+        return NE, "OTHER_ACCESS_ROLE"
     if cfg.admin_marker in roles or roles & set(cfg.legacy_markers):
         return BLOCKED, None
     if cfg.cap_marker in roles:
@@ -441,7 +479,8 @@ def classify(email, has_usage, idx, cfg, ancestor_check=None):
     if has_access:
         return EA, None
     if has_usage:
-        if grants_via_non_user(idx.non_user_members(cfg.access_role), email):
+        non_user_roles = (*cfg.access_roles, *subset_only, *cfg.all_extra_access_roles)
+        if any(grants_via_non_user(idx.non_user_members(r), email) for r in non_user_roles):
             return NE, "GROUP_GRANT_PRESENT"
         result = ancestor_check(email) if ancestor_check is not None else None
         if result is True:
@@ -612,17 +651,18 @@ def apply_changes(policy, changes, cfg):
     for email, action in changes:
         member = "user:%s" % email.lower()
         if action == "block":
-            _remove_member(new, cfg.access_role, member)
+            for role in cfg.replaceable_roles:
+                _remove_member(new, role, member)
             _add_member(new, cfg.cap_marker, member)
         elif action == "restore":
             _remove_member(new, cfg.cap_marker, member)
             _add_member(new, cfg.access_role, member)
         elif action == "disallow":
-            _remove_member(new, cfg.access_role, member)
-            _remove_member(new, cfg.cap_marker, member)
+            for role in (*cfg.replaceable_roles, cfg.cap_marker, *cfg.legacy_markers):
+                _remove_member(new, role, member)
             _add_member(new, cfg.admin_marker, member)
         elif action == "allow":
-            for role in (cfg.cap_marker, cfg.admin_marker) + tuple(cfg.legacy_markers):
+            for role in (*cfg.replaceable_roles, cfg.cap_marker, cfg.admin_marker, *cfg.legacy_markers):
                 _remove_member(new, role, member)
             _add_member(new, cfg.access_role, member)
         else:
@@ -659,7 +699,7 @@ def set_policy(ctx, policy):
     return ctx.rest("POST", url, json_body={"policy": policy, "updateMask": "bindings,etag"})
 
 
-def make_ancestor_check(ctx, cfg):
+def make_ancestor_check(ctx, cfg, extra_prefixes=()):
     cache = ctx.app.cache
     key = ("ancestors", ctx.project)
 
@@ -690,11 +730,12 @@ def make_ancestor_check(ctx, cfg):
         if state["value"] is None:
             state["value"], _ = cache.get_or_compute(key, 600, load)
         value = state["value"]
-        roles = {cfg.access_role, *cfg.privileged_roles, *cfg.extra_access_roles}
+        roles = {*cfg.replaceable_roles, *cfg.privileged_roles, *cfg.all_extra_access_roles}
         member = "user:%s" % email.lower()
         for pol in value["policies"]:
             for binding in pol.get("bindings") or []:
-                if binding.get("role") not in roles:
+                b_role = str(binding.get("role") or "")
+                if b_role not in roles and not (extra_prefixes and b_role.startswith(extra_prefixes)):
                     continue
                 members = [str(m).lower() for m in binding.get("members") or []]
                 if member in members or grants_via_non_user(members, email):
@@ -713,6 +754,158 @@ def marker_status(ctx, cfg):
         except GcpError as err:
             out.append({"role": role_id, "exists": False if err.kind == "not_found" else None})
     return out
+
+
+# A person is stopped by replacing the access role with a marker role: a custom role with the permissions of the
+# access role except businessaicode.* (Antigravity), so the Gemini Enterprise app keeps working. Which marker a person
+# holds also records why they are stopped: the cap marker (over a limit, restored at the reset) or the admin marker
+# (blocked by an administrator until unblocked). The deployment creates both roles. When an administrator's action
+# needs one that is missing or deleted, the helpers below create or restore it instead of refusing the action.
+
+MARKER_CREATE_ATTEMPTS = 5  # every attempt drops the permissions Google Cloud rejects in custom roles (as deploy.sh)
+
+
+def _marker_meta(cfg):
+    return {cfg.cap_marker_id: ("Antigravity Cap Blocked",
+                                "Assigned by AI Control Plane when a user exceeds the Antigravity cap. "
+                                "Same as the access role without businessaicode permissions."),
+            cfg.admin_marker_id: ("Antigravity Admin Blocked",
+                                  "Assigned by an administrator to disallow Antigravity. "
+                                  "Same as the access role without businessaicode permissions.")}
+
+
+def _marker_result(role_id, status, message):
+    return {"role": role_id, "status": status, "message": message}
+
+
+def _marker_failed(role_id, message, kind, reason=None):
+    """A failed result. kind is the upstream error kind; reason is what marker_unavailable() explains: denied,
+    deleted, reserved, base_role or error."""
+    return {"role": role_id, "status": "failed", "message": message, "kind": kind,
+            "reason": reason or ("denied" if kind == "denied" else "error")}
+
+
+def _marker_permissions(ctx, cfg):
+    """Permissions of a marker role: those of the access role without businessaicode.* (Antigravity). None when
+    the access role cannot be read."""
+    try:
+        role = ctx.rest("GET", "%s/%s" % (IAM_V1, cfg.access_role))
+    except GcpError as err:
+        LOG.warning("could not read %s kind=%s", cfg.access_role, err.kind)
+        return None
+    return [p for p in role.get("includedPermissions") or [] if not p.startswith("businessaicode.")]
+
+
+def _create_marker(ctx, role_id, meta, permissions):
+    """Creates one marker role. Returns (result, taken); taken is True when Google Cloud answers that the role ID
+    is in use, which _ensure_marker resolves by reading the role again."""
+    title, description = meta
+    perms = list(permissions)
+    for _ in range(MARKER_CREATE_ATTEMPTS):
+        try:
+            ctx.rest("POST", "%s/projects/%s/roles" % (IAM_V1, ctx.project),
+                     json_body={"roleId": role_id, "role": {"title": title, "description": description,
+                                                            "includedPermissions": perms, "stage": "GA"}})
+            return _marker_result(role_id, "created",
+                                  "Created with %d permissions (businessaicode.* excluded)." % len(perms)), False
+        except GcpError as err:
+            bad = [p for p in perms if p in (err.message or "")]
+            if err.kind == "invalid" and bad:
+                perms = [p for p in perms if p not in bad]
+                continue
+            return (_marker_failed(role_id, "The role could not be created (%s)." % err.kind, err.kind),
+                    err.kind == "conflict")
+    return _marker_failed(role_id, "The role could not be created.", "invalid"), False
+
+
+def _ensure_marker(ctx, cfg, role_id, base_permissions):
+    url = "%s/projects/%s/roles/%s" % (IAM_V1, ctx.project, urllib.parse.quote(role_id, safe=""))
+    for _ in (1, 2):
+        try:
+            existing = ctx.rest("GET", url)
+        except GcpError as err:
+            if err.kind != "not_found":
+                return _marker_failed(role_id, "The role could not be read (%s)." % err.kind, err.kind)
+            existing = None
+        if existing is not None and not existing.get("deleted"):
+            return _marker_result(role_id, "exists", "The role already exists.")
+        if existing is not None:
+            # Deleted in the last 7 days: Google Cloud still restores it, and the bindings on it work again.
+            body = {"etag": existing["etag"]} if existing.get("etag") else {}
+            try:
+                ctx.rest("POST", url + ":undelete", json_body=body)
+            except GcpError as err:
+                return _marker_failed(role_id, "The deleted role could not be restored (%s)." % err.kind, err.kind,
+                                      reason="denied" if err.kind == "denied" else "deleted")
+            return _marker_result(role_id, "restored", "The deleted role was restored.")
+        permissions = base_permissions()
+        if not permissions:
+            return _marker_failed(role_id, "The permissions of %s could not be read." % cfg.access_role, "unreadable",
+                                  reason="base_role")
+        result, taken = _create_marker(ctx, role_id, _marker_meta(cfg)[role_id], permissions)
+        if not taken:
+            return result
+        # Taken: created by someone else a moment ago (the next read finds it) or the ID of a deleted role.
+    # The ID is in use although no role can be read. Google Cloud keeps the ID of a deleted role unusable while it
+    # removes the role for good, up to 44 days after the deletion.
+    return _marker_failed(role_id, "The role ID is still reserved by a deleted role.", "conflict", reason="reserved")
+
+
+def ensure_marker_roles(ctx, cfg, role_ids=None):
+    """Makes the marker roles usable (both by default): an existing role is left as it is, a role deleted in the
+    last 7 days is restored, a missing role is created. One result per role: {"role", "status", "message"} with
+    status exists | restored | created | failed; failed results also carry "kind" and "reason" (_marker_failed).
+    The caller holds _WRITE_LOCK."""
+    loaded = {}
+
+    def base_permissions():
+        # Read once, and only when a role has to be created.
+        if "value" not in loaded:
+            loaded["value"] = _marker_permissions(ctx, cfg)
+        return loaded["value"]
+    return [_ensure_marker(ctx, cfg, role_id, base_permissions)
+            for role_id in (role_ids or (cfg.cap_marker_id, cfg.admin_marker_id))]
+
+
+def marker_unavailable(result, cfg):
+    """What an administrator reads when an action needs a marker role that could not be made usable: what the role
+    is for, why it is not there and what to do about it."""
+    lead = "Role %s is needed to stop Antigravity for a person, but " % result["role"]
+    reason, kind = result.get("reason"), result.get("kind")
+    if reason == "denied":
+        return lead + ("the dashboard service account is not allowed to read or create custom roles in this project. "
+                       "Grant it roles/iam.roleAdmin and try again.")
+    if reason == "deleted":
+        return lead + ("it is deleted and could not be restored (%s). Restore it in IAM > Roles, or enter another "
+                       "role ID in Settings > Governance policy." % kind)
+    if reason == "reserved":
+        return lead + ("Google Cloud does not accept this role ID right now, which happens for up to 44 days after a "
+                       "role with the same ID was deleted. Enter another role ID in Settings > Governance policy.")
+    if reason == "base_role":
+        return lead + "it could not be created because the permissions of %s could not be read." % cfg.access_role
+    return lead + "it could not be prepared (%s). Try again in a moment." % kind
+
+
+def _setup_markers(ctx, cfg, trigger):
+    """Creates or restores both marker roles and records it in the audit log. Returns (results, audit_logged)."""
+    results = ensure_marker_roles(ctx, cfg)
+    logged = write_audit(ctx, "setup", {
+        "result": "success" if all(r["status"] != "failed" for r in results) else "partial",
+        "target": "marker roles", "results": results, "trigger": trigger})
+    return results, logged
+
+
+def prepare_markers(ctx, cfg, needed, known):
+    """Before an administrator's action assigns marker roles: {role id: why it cannot be assigned} for the roles in
+    `needed` that are unusable (empty when all can be assigned). `known` is {role id: exists} as read by
+    marker_status. When a needed role is not known to exist, both marker roles are created or restored exactly as
+    setup() does. The caller holds _WRITE_LOCK."""
+    if all(known.get(role_id) is True for role_id in needed):
+        return {}
+    results, _ = _setup_markers(ctx, cfg, "on_demand")
+    if any(r["status"] in ("created", "restored") for r in results):
+        ctx.app.invalidate_governance()  # the status page lists the roles as present from now on
+    return {r["role"]: marker_unavailable(r, cfg) for r in results if r["status"] == "failed" and r["role"] in needed}
 
 
 def permission_status(ctx):
@@ -1462,7 +1655,7 @@ def compute_status(ctx, period, window, token_cap, request_cap, cost_cap=None, m
     idx = PolicyIndex(policy, readable=readable)
     ancestor = make_ancestor_check(ctx, cfg)
     population = {e for e in usage.users if is_human(e)}
-    population |= idx.direct_users({cfg.access_role, *cfg.markers})
+    population |= idx.direct_users({*cfg.access_roles, *cfg.markers})
     ledgers, org_paid, org_budget, org_used_up = {}, None, None, False
     if credit and usage.ok:
         ledgers = _credit_ledgers(ag, sorted(population), exceptions, segs, parts, pricing)
@@ -1525,7 +1718,7 @@ def compute_status(ctx, period, window, token_cap, request_cap, cost_cap=None, m
         row["resetAt"] = iso(reset_at) if (row["overCap"] and reset_at is not None) else None
         row["restoreAt"] = restore_at(state, susp, row["overCap"], reset_at, now)
         users.append(row)
-    non_user = idx.non_user_members(cfg.access_role) if readable else []
+    non_user = list(dict.fromkeys(m for r in cfg.access_roles for m in idx.non_user_members(r))) if readable else []
     gates, plan, budget_n = evaluate(users, readable, usage.ok, usage.records, non_user, cfg, cfg.access_role,
                                      mode=mode, now=now, telemetry_truncated=usage.truncated)
     planned = {}
@@ -2025,6 +2218,13 @@ def _run(ctx, mode, period, window, token_cap, request_cap, eval_mode, trigger, 
                                         "status": "skipped", "message": message})
                 break
             markers = {m["role"]: m["exists"] for m in payload["prerequisites"]["markerRoles"]}
+            needed = {_marker_for(action, cfg) for action in CYCLE_ACTIONS if plan[action]} - {None}
+            if trigger == "admin":
+                unavailable = prepare_markers(ctx, cfg, needed, markers)
+            else:
+                # A scheduled run never creates roles: nobody is there to see it. The next administrator's action does.
+                unavailable = {m: "Marker role %s does not exist. Run setup first." % m
+                               for m in needed if markers.get(m) is not True}
             mutations = []
             for action in CYCLE_ACTIONS:
                 for uid in plan[action]:
@@ -2036,9 +2236,9 @@ def _run(ctx, mode, period, window, token_cap, request_cap, eval_mode, trigger, 
                                         "message": "The user state changed; no IAM change was made."})
                         continue
                     marker = _marker_for(action, cfg)
-                    if marker and markers.get(marker) is not True:
+                    if marker in unavailable:
                         changes.append({"uid": uid, "email": user["email"], "action": action, "status": "failed",
-                                        "message": "Marker role %s does not exist. Run setup first." % marker})
+                                        "message": unavailable[marker]})
                         continue
                     mutations.append((uid, user["email"], action))
             if not mutations:
@@ -2180,6 +2380,7 @@ def review(ctx):
             users = {u["uid"]: u for u in payload["users"] or []}
             cfg = internal["cfg"]
             markers = {m["role"]: m["exists"] for m in payload["prerequisites"]["markerRoles"]}
+            cap_problem = False  # False: not checked yet. None: the cap marker can be assigned. Text: why it cannot.
             results, mutations, allow_only = [], [], []
             for uid in uids:
                 user = users.get(uid)
@@ -2194,12 +2395,13 @@ def review(ctx):
                         skip = "The user is not over the cap."
                     elif (user["exception"] or {}).get("type") == "allow":
                         skip = "An allow exception applies to this user."
-                    elif markers.get(cfg.cap_marker_id) is not True:
-                        results.append({"uid": uid, "email": user["email"], "status": "failed",
-                                        "message": "Marker role %s does not exist. Run setup first."
-                                        % cfg.cap_marker_id})
-                        continue
                     else:
+                        if cap_problem is False:
+                            cap_problem = prepare_markers(ctx, cfg, {cfg.cap_marker_id}, markers).get(cfg.cap_marker_id)
+                        if cap_problem:
+                            results.append({"uid": uid, "email": user["email"], "status": "failed",
+                                            "message": cap_problem})
+                            continue
                         mutations.append((uid, user["email"], "block"))
                 elif user["state"] == CAPPED:
                     mutations.append((uid, user["email"], "restore"))
@@ -2375,9 +2577,14 @@ def _resolve_uid(ctx, uid, policy_idx, cfg, usage):
     for email in usage.users:
         if uid_for(email) == uid:
             return email
-    for email in policy_idx.direct_users({cfg.access_role, *cfg.markers, *cfg.privileged_roles}):
+    direct_scope = {*cfg.replaceable_roles, *cfg.all_extra_access_roles, *cfg.markers, *cfg.privileged_roles}
+    for email in policy_idx.direct_users(direct_scope):
         if uid_for(email) == uid:
             return email
+    if getattr(ctx.app, "settings", None) is not None:
+        for email in ctx.app.settings.blocked_accounts():
+            if uid_for(email) == uid:
+                return email
     try:
         from .users import user_table
         rng = timeutil.parse_range({}, ctx.tz_name, ctx.ws["default_range_days"])
@@ -2388,6 +2595,20 @@ def _resolve_uid(ctx, uid, policy_idx, cfg, usage):
         if uid_for(email) == uid:
             return email
     return None
+
+
+def _unconditional_marker_conflict(idx, email, cfg):
+    """True when the user is in CONFLICTING_BINDINGS solely because unconditional replaceable access roles and marker
+    roles coexist (for example roles/discoveryengine.user alongside CustomAntigravityAdminBlocked). An explicit
+    administrator allow or disallow resolves this cleanly; automated runs never touch it."""
+    direct = idx.user_bindings(email)
+    roles = {role for role, _ in direct}
+    if roles & (set(cfg.privileged_roles) | set(cfg.all_extra_access_roles)):
+        return False
+    managed = set(cfg.replaceable_roles) | cfg.markers
+    if any(cond for role, cond in direct if role in managed):
+        return False
+    return bool(roles & set(cfg.replaceable_roles)) and bool(roles & cfg.markers)
 
 
 def _change_user(ctx, decide, uid=None, email=None):
@@ -2411,22 +2632,31 @@ def _change_user(ctx, decide, uid=None, email=None):
                 raise ApiError("not_found", "User not found.")
             has_usage = (usage.users.get(target) or {}).get("requests", 0) > 0
             state, reason = classify(target, has_usage, idx, cfg, make_ancestor_check(ctx, cfg))
-            action = decide(state) if callable(decide) else decide
+            repairable = (state == NE and reason == "CONFLICTING_BINDINGS" and
+                          _unconditional_marker_conflict(idx, target, cfg))
+            if callable(decide):
+                action = decide(EA if repairable else state)
+            else:
+                action = decide
             if action is None:
                 return target, state, state, None
-            if state in (NE, UNKNOWN):
+            if repairable and action in ("allow", "disallow"):
+                pass
+            elif state in (NE, UNKNOWN):
                 raise ApiError("conflict", REMEDIATION.get(reason) or "This user cannot be managed per user.")
-            try:
-                check_transition(state, action)
-            except ValueError:
-                if action == "allow":
-                    raise ApiError("conflict", "The user already has access.")
-                raise ApiError("conflict", "The user does not currently have access that can be disallowed.")
+            else:
+                try:
+                    check_transition(state, action)
+                except ValueError:
+                    if action == "allow":
+                        raise ApiError("conflict", "The user already has access.")
+                    raise ApiError("conflict", "The user does not currently have access that can be disallowed.")
             marker = _marker_for(action, cfg)
             if marker:
                 markers = {m["role"]: m["exists"] for m in marker_status(ctx, cfg)}
-                if markers.get(marker) is not True:
-                    raise ApiError("conflict", "Marker role %s does not exist. Run setup first." % marker)
+                unavailable = prepare_markers(ctx, cfg, {marker}, markers)
+                if marker in unavailable:
+                    raise ApiError("conflict", unavailable[marker])
             new_policy = apply_changes(policy, [(target, action)], cfg)
             try:
                 set_policy(ctx, new_policy)
@@ -2463,6 +2693,11 @@ def _sync_after_action(ctx, email, previous, action):
     except ApiError as err:
         LOG.warning("governance state was not saved after %s: %s", action, err.code)
         return None
+    if action == "allow" and getattr(ctx.app, "settings", None) is not None and ctx.app.settings.is_blocked(email):
+        try:
+            ctx.app.settings.mutate_auth(lambda auth: (auth.get("blocked") or {}).pop(email, None), ctx.identity.email)
+        except ApiError:
+            pass
     return public_exception(item)
 
 
@@ -2483,68 +2718,222 @@ def user_action(ctx):
 
 
 # ---------------------------------------------------------------------------
+# Full AI service & dashboard access block / restore (Users & Access drawer)
+# ---------------------------------------------------------------------------
+
+AI_ROLE_PREFIXES = (
+    "roles/discoveryengine.",
+    "roles/businessaicode.",
+    "roles/cloudaicompanion.",
+    "roles/aiplatform.",
+    "roles/notebooklm.",
+    "roles/geminidataanalytics.",
+    "roles/modelarmor.",
+    "roles/mcp.",
+)
+AI_PERMISSION_PREFIXES = (
+    "discoveryengine.",
+    "businessaicode.",
+    "cloudaicompanion.",
+    "aiplatform.",
+    "notebooklm.",
+    "geminidataanalytics.",
+    "modelarmor.",
+)
+PROJECT_WIDE_PRIVILEGED_ROLES = ("roles/owner", "roles/editor", "roles/resourcemanager.projectIamAdmin")
+
+
+def _custom_role_is_ai(ctx, role_name, cache):
+    if role_name in cache:
+        return cache[role_name]
+    if not str(role_name or "").startswith("projects/"):
+        cache[role_name] = False
+        return False
+    try:
+        data = ctx.rest("GET", "%s/%s" % (IAM_V1, role_name))
+    except GcpError:
+        cache[role_name] = False
+        return False
+    perms = [str(p) for p in data.get("includedPermissions") or []]
+    if "resourcemanager.projects.setIamPolicy" in perms:
+        cache[role_name] = False
+        return False
+    cache[role_name] = any(p.startswith(AI_PERMISSION_PREFIXES) for p in perms)
+    return cache[role_name]
+
+
+def is_ai_service_role(ctx, role_name, cfg, custom_cache):
+    role = str(role_name or "")
+    if role in cfg.markers or role in cfg.replaceable_roles or role in cfg.all_extra_access_roles:
+        return True
+    if role.startswith(AI_ROLE_PREFIXES):
+        return True
+    return _custom_role_is_ai(ctx, role, custom_cache)
+
+
+def _normalize_restore_roles(removed_roles, cfg, fallback=None):
+    out = []
+    for role in removed_roles:
+        mapped = cfg.access_role if (role in cfg.markers or role in cfg.replaceable_roles) else role
+        if mapped not in out:
+            out.append(mapped)
+    if not out and fallback:
+        for role in fallback:
+            if role not in cfg.markers and role not in out:
+                out.append(role)
+    return out
+
+
+def set_user_ai_access(ctx, action, uid=None, email=None, note=""):
+    """Blocks or restores a user's entire AI access on this project (Gemini Enterprise, NotebookLM, Antigravity,
+    Agent Platform IAM roles) and revokes or restores their AI Control Plane dashboard sign-in."""
+    if action not in ("block_all", "unblock_all"):
+        raise ApiError("bad_request", "Field 'action' must be 'block_all' or 'unblock_all'.")
+    note = _note(note)
+    cfg = gov_config(ctx.settings)
+    ag = ctx.settings["governance"]["antigravity"]
+    start, end = timeutil.governance_window(ag["period"], ag["window"], **period_anchor(ctx.settings))
+    mgr = getattr(ctx.app, "settings", None)
+    existing_blocks = mgr.blocked_accounts() if mgr is not None else {}
+    custom_cache = {}
+    removed_roles = []
+    restored_roles = []
+    residual_warnings = []
+
+    with _WRITE_LOCK:
+        usage = antigravity_usage(ctx, start, end)
+        for attempt in (1, 2):
+            try:
+                policy = get_policy(ctx)
+            except GcpError as err:
+                LOG.warning("getIamPolicy failed kind=%s", err.kind)
+                raise ApiError("upstream_error", "The project IAM policy could not be read.")
+            idx = PolicyIndex(policy)
+            target = (email or "").strip().lower() or _resolve_uid(ctx, uid, idx, cfg, usage)
+            if not target or not config.EMAIL_RE.match(target) or not is_human(target):
+                raise ApiError("not_found", "User not found.")
+            if target == ctx.identity.email:
+                raise ApiError("conflict", "You cannot block your own account.")
+            if action == "block_all" and is_admin_email(target, ctx.settings["security"].get("admins")):
+                raise ApiError("conflict", "This user is a dashboard administrator. Remove administrator privileges "
+                                           "in Settings > Access control first.")
+            direct = idx.user_bindings(target)
+            direct_roles = {role for role, _ in direct}
+            if action == "block_all":
+                project_priv = sorted(direct_roles & set(PROJECT_WIDE_PRIVILEGED_ROLES))
+                if project_priv:
+                    raise ApiError("conflict",
+                                   "This user holds %s on the project, which grants full project control beyond AI "
+                                   "services. Remove that role in Google Cloud IAM first." % project_priv[0])
+                unconditional_ai = [role for role, cond in direct
+                                    if not cond and is_ai_service_role(ctx, role, cfg, custom_cache)]
+                prior = (existing_blocks.get(target) or {}).get("restoreRoles") or []
+                restore_roles = _normalize_restore_roles(unconditional_ai, cfg, fallback=prior)
+                removed_roles = list(unconditional_ai)
+                if unconditional_ai:
+                    new_policy = copy.deepcopy(policy)
+                    new_policy["bindings"] = [dict(b) for b in new_policy.get("bindings") or []]
+                    member = "user:%s" % target
+                    for role in unconditional_ai:
+                        _remove_member(new_policy, role, member)
+                    new_policy["version"] = 3
+                    try:
+                        set_policy(ctx, new_policy)
+                    except GcpError as err:
+                        if err.kind == "conflict" and attempt == 1:
+                            continue
+                        LOG.warning("setIamPolicy failed kind=%s", err.kind)
+                        raise ApiError("upstream_error", "The IAM policy update failed.")
+                cond_ai = [role for role, cond in direct if cond and is_ai_service_role(ctx, role, cfg, custom_cache)]
+                if cond_ai:
+                    residual_warnings.append("Conditional project IAM bindings remain (%s) and must be removed in "
+                                             "Google Cloud IAM." % ", ".join(sorted(set(cond_ai))))
+                group_ai = any(grants_via_non_user(idx.non_user_members(b.get("role")), target)
+                               for b in idx.bindings
+                               if is_ai_service_role(ctx, b.get("role"), cfg, custom_cache))
+                if group_ai:
+                    residual_warnings.append("A Google Group or domain IAM binding on an AI role still grants access.")
+                anc = make_ancestor_check(ctx, cfg, extra_prefixes=AI_ROLE_PREFIXES)(target)
+                if anc is True:
+                    residual_warnings.append("An inherited folder or organization IAM binding still grants access.")
+                break
+            else:
+                prior = (existing_blocks.get(target) or {}).get("restoreRoles") or []
+                restored_roles = [r for r in prior if r not in cfg.markers] or [cfg.access_role]
+                new_policy = copy.deepcopy(policy)
+                new_policy["bindings"] = [dict(b) for b in new_policy.get("bindings") or []]
+                member = "user:%s" % target
+                for role in (*cfg.markers,):
+                    _remove_member(new_policy, role, member)
+                for role in restored_roles:
+                    _add_member(new_policy, role, member)
+                new_policy["version"] = 3
+                try:
+                    set_policy(ctx, new_policy)
+                except GcpError as err:
+                    if err.kind == "conflict" and attempt == 1:
+                        continue
+                    LOG.warning("setIamPolicy failed kind=%s", err.kind)
+                    raise ApiError("upstream_error", "The IAM policy update failed.")
+                break
+
+    if mgr is not None:
+        if action == "block_all":
+            from . import access as access_svc, iap_access
+            admins_ui, allowed_ui = access_svc._ui_lists(mgr)
+            if target in allowed_ui:
+                access_svc._save_lists(ctx, admins_ui, [m for m in allowed_ui if m != target])
+                try:
+                    iap_access.revoke(ctx.app, ctx.quota_project, [target])
+                except Exception:  # pylint: disable=broad-except
+                    pass
+            epoch = int(time.time() * 1000)
+            block_doc = {"at": iso(utcnow()), "by": ctx.identity.email,
+                         "note": note or "All AI access blocked by an administrator.",
+                         "removedRoles": removed_roles, "restoreRoles": restore_roles}
+
+            def apply_block(auth):
+                auth["revoked"][target] = epoch
+                auth.setdefault("blocked", {})[target] = block_doc
+            mgr.mutate_auth(apply_block, ctx.identity.email)
+        else:
+            mgr.mutate_auth(lambda auth: (auth.get("blocked") or {}).pop(target, None), ctx.identity.email)
+
+    def apply_gov(state):
+        state["suspensions"] = [s for s in state.get("suspensions") or [] if s["email"] != target]
+        if action == "block_all":
+            _put_exception(state, _exception_item(ctx, target, "block", None,
+                                                  note or "All AI access blocked by an administrator."))
+        else:
+            state["exceptions"] = [e for e in state.get("exceptions") or []
+                                   if not (e["email"] == target and e["type"] == "block")]
+    try:
+        mutate_state(ctx, apply_gov)
+    except ApiError as err:
+        LOG.warning("governance state was not saved after %s: %s", action, err.code)
+
+    audit_logged = write_audit(ctx, action, {
+        "result": "success", "target": target, "uid": uid_for(target),
+        "removedRoles": removed_roles if action == "block_all" else None,
+        "restoredRoles": restored_roles if action == "unblock_all" else None,
+        "dashboardBlocked": action == "block_all",
+        "warnings": residual_warnings or None})
+    ctx.app.invalidate_governance()
+    return {"uid": uid_for(target), "email": target, "action": action,
+            "aiBlocked": action == "block_all",
+            "removedRoles": removed_roles, "restoredRoles": restored_roles,
+            "warnings": residual_warnings, "auditLogged": audit_logged}
+
+
+# ---------------------------------------------------------------------------
 # POST /api/v1/governance/antigravity/setup
 # ---------------------------------------------------------------------------
 
 def setup(ctx):
+    """Creates the marker roles that are missing and restores the ones deleted in the last 7 days."""
     cfg = gov_config(ctx.settings)
-    base_role = cfg.access_role
-    results = []
-    try:
-        role = ctx.rest("GET", "%s/%s" % (IAM_V1, base_role))
-        permissions = [p for p in role.get("includedPermissions") or [] if not p.startswith("businessaicode.")]
-    except GcpError as err:
-        LOG.warning("could not read %s kind=%s", base_role, err.kind)
-        permissions = None
-    titles = {cfg.cap_marker_id: ("Antigravity Cap Blocked",
-                                  "Assigned by AI Control Plane when a user exceeds the Antigravity cap. "
-                                  "Same as the access role without businessaicode permissions."),
-              cfg.admin_marker_id: ("Antigravity Admin Blocked",
-                                    "Assigned by an administrator to disallow Antigravity. "
-                                    "Same as the access role without businessaicode permissions.")}
     with _WRITE_LOCK:
-        for role_id in (cfg.cap_marker_id, cfg.admin_marker_id):
-            url = "%s/projects/%s/roles/%s" % (IAM_V1, ctx.project, urllib.parse.quote(role_id, safe=""))
-            try:
-                existing = ctx.rest("GET", url)
-                if existing.get("deleted"):
-                    results.append({"role": role_id, "status": "failed",
-                                    "message": "The role exists in a deleted state; undelete it in IAM."})
-                else:
-                    results.append({"role": role_id, "status": "exists", "message": "The role already exists."})
-                continue
-            except GcpError as err:
-                if err.kind != "not_found":
-                    results.append({"role": role_id, "status": "failed",
-                                    "message": "The role could not be read (%s)." % err.kind})
-                    continue
-            if not permissions:
-                results.append({"role": role_id, "status": "failed",
-                                "message": "The permissions of %s could not be read." % base_role})
-                continue
-            title, description = titles[role_id]
-            perms = list(permissions)
-            status = None
-            for _ in range(2):
-                try:
-                    ctx.rest("POST", "%s/projects/%s/roles" % (IAM_V1, ctx.project),
-                             json_body={"roleId": role_id, "role": {"title": title, "description": description,
-                                                                    "includedPermissions": perms, "stage": "GA"}})
-                    status = {"role": role_id, "status": "created",
-                              "message": "Created with %d permissions (businessaicode.* excluded)." % len(perms)}
-                    break
-                except GcpError as err:
-                    bad = [p for p in perms if p in (err.message or "")]
-                    if err.kind == "invalid" and bad:
-                        perms = [p for p in perms if p not in bad]
-                        continue
-                    status = {"role": role_id, "status": "failed",
-                              "message": "The role could not be created (%s)." % err.kind}
-                    break
-            results.append(status or {"role": role_id, "status": "failed", "message": "The role could not be created."})
-        audit_logged = write_audit(ctx, "setup", {
-            "result": "success" if all(r["status"] != "failed" for r in results) else "partial",
-            "target": "marker roles", "results": results})
+        results, audit_logged = _setup_markers(ctx, cfg, "admin")
     ctx.app.invalidate_governance()
     return {"results": results, "auditLogged": audit_logged}
 

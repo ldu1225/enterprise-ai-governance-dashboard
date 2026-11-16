@@ -165,8 +165,18 @@ export function reasonLabel(reason) {
   return reason ? t(map[reason] || reason) : null;
 }
 
-export function iamBadge(iam) {
+export function iamBadge(iam, { surfaceContext } = {}) {
   if (!iam || !iam.state) return badge(DASH, 'neutral', { size: 'sm' });
+  if (iam.aiBlocked && iam.aiBlocked.active) {
+    const b = statusBadge('ALL_AI_BLOCKED', { size: 'sm' });
+    b.title = t('All project AI IAM roles and dashboard sign-in are blocked.');
+    return b;
+  }
+  if (surfaceContext === 'users' && iam.state === 'BLOCKED_BY_ADMIN') {
+    const b = badge(t('Antigravity blocked'), 'warning', { dot: true, size: 'sm' });
+    b.title = t('Only Antigravity (businessaicode.*) is blocked; Gemini Enterprise web access remains enabled.');
+    return b;
+  }
   const b = statusBadge(iam.state, { size: 'sm' });
   if (iam.reason) b.title = reasonLabel(iam.reason);
   return b;
@@ -205,7 +215,7 @@ function renderUserDetail(drawer, d, meta, onChanged) {
   mount(body);
   const notice = warningsNotice(meta && meta.warnings);
   if (notice) body.append(notice);
-  body.append(h('div', { class: 'row wrap' }, surfaceChips(d.user && d.user.surfaces), d.iam ? iamBadge(d.iam) : null));
+  body.append(h('div', { class: 'row wrap' }, surfaceChips(d.user && d.user.surfaces), d.iam ? iamBadge(d.iam, { surfaceContext: 'users' }) : null));
   body.append(h('div', { class: 'stat-row' },
     stat(t('Gemini Enterprise prompts'), fmt.int(m.gePrompts)),
     stat(t('Agent calls'), fmt.int(m.agentCalls)),
@@ -287,7 +297,10 @@ function renderUserDetail(drawer, d, meta, onChanged) {
     }) }));
   }
 
-  if (d.iam) body.append(iamCard(drawer, d, onChanged));
+  if (d.iam) {
+    body.append(workspaceAccessCard(drawer, d, onChanged));
+    body.append(iamCard(drawer, d, onChanged));
+  }
 }
 
 const CAP_REASON_LABELS = {
@@ -312,19 +325,83 @@ function capRuleText(rule) {
   return rule.scope === 'period' ? t('Allowed this period') : t('Always allow');
 }
 
+function workspaceAccessCard(drawer, d, onChanged) {
+  const iam = d.iam;
+  const aiBlock = iam.aiBlocked;
+  const actions = [];
+  if (iam.actions) {
+    if (iam.actions.unblockAll) {
+      actions.push(button({
+        label: t('Restore AI access'),
+        icon: 'unlock',
+        size: 'sm',
+        variant: 'primary',
+        onClick: () => allAiAccessAction(drawer, d, 'unblock_all', onChanged),
+      }));
+    }
+    if (iam.actions.blockAll) {
+      actions.push(button({
+        label: t('Block all AI access'),
+        icon: 'lock',
+        size: 'sm',
+        variant: 'danger',
+        onClick: () => allAiAccessAction(drawer, d, 'block_all', onChanged),
+      }));
+    }
+  }
+  const hasRoles = Boolean(iam.bindings && iam.bindings.length);
+  let statusNode;
+  if (aiBlock && aiBlock.active) {
+    statusNode = statusBadge('ALL_AI_BLOCKED', { size: 'sm' });
+  } else if (aiBlock && (aiBlock.remainingRoles || []).length) {
+    statusNode = badge(t('Dashboard blocked (IAM roles remain)'), 'warning', { dot: true, size: 'sm' });
+  } else if (hasRoles) {
+    statusNode = badge(t('{n} direct IAM roles', { n: fmt.int(iam.bindings.length) }), 'info', { size: 'sm' });
+  } else {
+    statusNode = badge(t('No direct IAM roles'), 'neutral', { size: 'sm' });
+  }
+  const removedList = aiBlock && (aiBlock.removedRoles || []).length ? aiBlock.removedRoles.join(', ') : null;
+  const restoreList = aiBlock && (aiBlock.restoreRoles || []).length ? aiBlock.restoreRoles.join(', ') : null;
+  return card({
+    title: t('AI service & workspace access'),
+    subtitle: t('Controls Gemini Enterprise, NotebookLM, Antigravity and Agent Platform IAM roles on this project, plus sign-in to this dashboard.'),
+    actions: actions.length ? h('div', { class: 'row' }, actions) : null,
+    body: h('div', { class: 'stack' },
+      kv([
+        [t('Overall status'), statusNode],
+        aiBlock && aiBlock.at ? [t('Blocked at'), `${fmt.dateTime(aiBlock.at)}${aiBlock.by ? ` \u00b7 ${aiBlock.by}` : ''}`] : null,
+        removedList ? [t('Removed IAM roles'), h('span', { class: 'cell-mono' }, removedList)] : null,
+        aiBlock && restoreList ? [t('Roles on restore'), h('span', { class: 'cell-mono' }, restoreList)] : null,
+      ]),
+      aiBlock && (aiBlock.remainingRoles || []).length ? banner({
+        tone: 'warning',
+        title: t('Direct AI IAM roles still present'),
+        text: t('The following AI roles still exist on this user in Google Cloud IAM: {roles}. Select Block all AI access to remove them.', { roles: aiBlock.remainingRoles.join(', ') }),
+      }) : null,
+      (iam.bindings && iam.bindings.length) ? dataTable({
+        columns: [
+          { key: 'role', label: t('Role'), render: (r) => h('span', { class: 'cell-mono' }, r.role) },
+          { key: 'member', label: t('Member'), render: (r) => h('span', { class: 'cell-mono' }, r.member) },
+          { key: 'conditional', label: t('Conditional'), render: (r) => (r.conditional ? badge(t('Yes'), 'warning', { size: 'sm' }) : h('span', { class: 'muted' }, t('No'))) },
+        ],
+        rows: iam.bindings, searchable: false, pageSize: 8,
+      }) : h('p', { class: 'muted' }, t('No direct project bindings for this user.'))),
+  });
+}
+
 function iamCard(drawer, d, onChanged) {
   const iam = d.iam;
   const actions = [];
   if (iam.actions) {
-    if (iam.actions.allow) actions.push(button({ label: iam.state === 'CAPPED_BY_TOOL' ? t('Restore now') : t('Allow access'), icon: 'unlock', size: 'sm', onClick: () => userAction(drawer, d, 'allow', onChanged) }));
-    if (iam.actions.disallow) actions.push(button({ label: t('Disallow'), icon: 'lock', size: 'sm', variant: 'danger', onClick: () => userAction(drawer, d, 'disallow', onChanged) }));
+    if (iam.actions.allow) actions.push(button({ label: iam.state === 'CAPPED_BY_TOOL' ? t('Restore now') : t('Allow Antigravity'), icon: 'unlock', size: 'sm', onClick: () => userAction(drawer, d, 'allow', onChanged) }));
+    if (iam.actions.disallow) actions.push(button({ label: t('Disallow Antigravity'), icon: 'lock', size: 'sm', variant: 'danger', onClick: () => userAction(drawer, d, 'disallow', onChanged) }));
   }
   const remediation = iam.reason && REMEDIATION[iam.reason] ? t(REMEDIATION[iam.reason]) : (iam.remediation ? serverText(iam.remediation) : null);
   const ccy = iam.currency || 'USD';
   const reasons = (iam.overCapReasons || []).map((r) => t(CAP_REASON_LABELS[r] || r)).join(', ');
   return card({
     title: t('Antigravity access (IAM)'),
-    subtitle: t('Evaluated against the project IAM policy using the agy-admin status model.'),
+    subtitle: t('Stops or restores Antigravity coding IDE permissions (businessaicode.*) while keeping Gemini Enterprise web chat enabled.'),
     actions: actions.length ? h('div', { class: 'row' }, actions) : null,
     body: h('div', { class: 'stack' },
       kv([
@@ -337,16 +414,54 @@ function iamCard(drawer, d, onChanged) {
         iam.exception ? [t('Exception rule'), `${capRuleText(iam.exception)}${iam.exception.until ? ` \u00b7 ${t('Until {time}', { time: fmt.dateTime(iam.exception.until) })}` : ''}`] : null,
         iam.restoreAt ? [t('Access returns'), `${fmt.dateTime(iam.restoreAt)} (${fmt.relative(iam.restoreAt)})`] : null,
       ]),
-      remediation ? banner({ tone: 'info', title: t('Manual action required'), text: remediation }) : null,
-      (iam.bindings && iam.bindings.length) ? dataTable({
-        columns: [
-          { key: 'role', label: t('Role'), render: (r) => h('span', { class: 'cell-mono' }, r.role) },
-          { key: 'member', label: t('Member'), render: (r) => h('span', { class: 'cell-mono' }, r.member) },
-          { key: 'conditional', label: t('Conditional'), render: (r) => (r.conditional ? badge(t('Yes'), 'warning', { size: 'sm' }) : h('span', { class: 'muted' }, t('No'))) },
-        ],
-        rows: iam.bindings, searchable: false, pageSize: 8,
-      }) : h('p', { class: 'muted' }, t('No direct project bindings for this user.'))),
+      remediation ? banner({ tone: 'info', title: t('Manual action required'), text: remediation }) : null),
   });
+}
+
+async function allAiAccessAction(drawer, d, action, onChanged) {
+  if (!requireAdmin(action === 'block_all' ? t('Block all AI access') : t('Restore AI access'), 'resourcemanager.projects.setIamPolicy')) return;
+  const email = d.user.email;
+  const blocking = action === 'block_all';
+  const restoreRoles = ((d.iam && d.iam.aiBlocked && d.iam.aiBlocked.restoreRoles) || []).join(', ');
+  const message = blocking
+    ? t('Every direct AI IAM role (Gemini Enterprise, NotebookLM, Antigravity, Agent Platform and marker roles) on this project will be removed for {email}, active dashboard sessions will end immediately, and future dashboard sign-ins will be blocked until restored.', { email })
+    : (restoreRoles
+      ? t('Dashboard sign-in and project AI IAM roles ({roles}) will be restored for {email}.', { email, roles: restoreRoles })
+      : t('Dashboard sign-in and the default Gemini Enterprise access role will be restored for {email}.', { email }));
+  const ok = await confirmDialog({
+    title: blocking ? t('Block all AI access') : t('Restore AI access'),
+    message,
+    confirmLabel: blocking ? t('Block all AI access') : t('Restore AI access'),
+    tone: blocking ? 'danger' : 'primary',
+    requireText: blocking ? 'BLOCK' : null,
+  });
+  if (!ok) return;
+  try {
+    const res = await api.post('/api/v1/users/access-action', { uid: d.user.uid, action });
+    const r = res.data || {};
+    const warn = (r.warnings || []).map((w) => serverText(w)).join(' ');
+    if (blocking) {
+      const count = (r.removedRoles || []).length;
+      toast({
+        title: t('All AI access blocked'),
+        text: warn
+          ? `${r.email}: ${warn}`
+          : t('{email}: {n} project AI IAM role(s) removed and dashboard access revoked.', { email: r.email, n: fmt.int(count) }),
+        tone: warn ? 'warning' : 'success',
+        timeout: warn ? 10000 : 5000,
+      });
+    } else {
+      toast({
+        title: t('AI access restored'),
+        text: t('{email}: restored {roles} and unblocked dashboard sign-in.', { email: r.email, roles: (r.restoredRoles || []).join(', ') || DASH }),
+        tone: 'success',
+      });
+    }
+    drawer.close();
+    if (onChanged) onChanged();
+  } catch (err) {
+    toast({ title: t('Action refused'), text: errorText(err), tone: 'danger', timeout: 9000 });
+  }
 }
 
 async function userAction(drawer, d, action, onChanged) {

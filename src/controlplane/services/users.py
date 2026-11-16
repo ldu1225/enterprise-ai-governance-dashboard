@@ -8,7 +8,7 @@ from .. import timeutil
 from ..gcp import GcpError
 from ..httpkit import ApiError
 from ..schema import quote_ident
-from ..security import uid_for
+from ..security import is_admin_email, uid_for
 from .base import (AGY_SINK, ARMOR_OPS, AUDIT_DATA_ACCESS, bucket_sql, human_sql, iso, range_params, to_int)
 from .gemini_enterprise import (ACTIVITY_UPLOAD_NOTE, AGENT_NAMES_CTE, act_ctes, activity_upload_sql, agent_label,
                                 directory_for, ev_cte, file_items_sql, file_rows_to_items, msg_ctes, prompt_caps)
@@ -220,19 +220,54 @@ CAP_FIELDS = ("exception", "suspension", "restoreAt", "overCap", "overCapReasons
               "caps", "credit")
 
 
-def iam_for(email, status_payload, internal):
+def _blocked_map(ctx):
+    mgr = getattr(ctx.app, "settings", None)
+    return mgr.blocked_accounts() if mgr is not None else {}
+
+
+def _ai_block_status(ctx, email, internal, blocked_map, custom_cache):
+    rec = (blocked_map or {}).get(email)
+    if not rec:
+        return None
+    remaining = []
+    if internal and internal.get("readable"):
+        cfg = internal["cfg"]
+        remaining = [role for role, _ in internal["idx"].user_bindings(email)
+                     if governance.is_ai_service_role(ctx, role, cfg, custom_cache)]
+    return {
+        "active": not remaining,
+        "dashboardBlocked": True,
+        "at": rec.get("at") or None,
+        "by": rec.get("by") or None,
+        "note": rec.get("note") or None,
+        "removedRoles": list(rec.get("removedRoles") or []),
+        "restoreRoles": list(rec.get("restoreRoles") or []),
+        "remainingRoles": remaining,
+    }
+
+
+def iam_for(email, status_payload, internal, ctx=None, blocked_map=None, custom_cache=None):
+    ai_block = _ai_block_status(ctx, email, internal, blocked_map, custom_cache if custom_cache is not None else {}) \
+        if ctx is not None else None
     if status_payload is None or internal is None:
-        return {"state": "UNKNOWN", "reason": None}
+        out = {"state": "UNKNOWN", "reason": None}
+        if ai_block is not None:
+            out["aiBlocked"] = ai_block
+        return out
     for u in status_payload["users"] or []:
         if u["email"] == email:
             out = {"state": u["state"], "reason": u["reason"]}
             out.update({k: u.get(k) for k in CAP_FIELDS})
+            if ai_block is not None:
+                out["aiBlocked"] = ai_block
             return out
     state, reason = governance.classify(email, False, internal["idx"], internal["cfg"])
     out = {"state": state, "reason": reason}
     for row in status_payload.get("exceptions") or []:
         if row.get("email") == email:
             out["exception"] = {k: v for k, v in row.items() if k not in ("email", "uid", "state")}
+    if ai_block is not None:
+        out["aiBlocked"] = ai_block
     return out
 
 
@@ -260,6 +295,8 @@ def list_users(ctx):
     if not table["sourced"]:
         return out
     available = set(table["available"])
+    blocked_map = _blocked_map(ctx)
+    custom_cache = {}
     rows = []
     for email, m in table["users"].items():
         rows.append({"uid": uid_for(email), "email": email, "surfaces": surfaces_of(m),
@@ -271,7 +308,9 @@ def list_users(ctx):
                      "agentPlatformCalls": _metric(m, "agentPlatformCalls", available),
                      "armorBlocks": _metric(m, "armorBlocks", available),
                      "fileUploads": _metric(m, "fileUploads", available),
-                     "lastActive": iso(m.get("lastActive")), "iam": iam_for(email, status_payload, internal)})
+                     "lastActive": iso(m.get("lastActive")),
+                     "iam": iam_for(email, status_payload, internal, ctx=ctx, blocked_map=blocked_map,
+                                    custom_cache=custom_cache)})
     rows.sort(key=lambda r: (-sum(r[k] or 0 for k in ("gePrompts", "agentCalls", "notebooklmPrompts",
                                                       "antigravityRequests", "agentPlatformCalls")), r["email"]))
     out["users"] = rows
@@ -286,11 +325,20 @@ def find_email(ctx, uid, rng):
     for email in table["users"]:
         if uid_for(email) == uid:
             return email
+    for email in _blocked_map(ctx):
+        if uid_for(email) == uid:
+            return email
     status_payload, internal = iam_context(ctx)
     if status_payload is not None:
-        for u in status_payload["users"]:
+        for u in status_payload["users"] or []:
             if u["uid"] == uid:
                 return u["email"]
+    if internal and internal.get("readable"):
+        for binding in internal["idx"].bindings:
+            for member in binding.get("members") or []:
+                low = str(member).lower()
+                if low.startswith("user:") and uid_for(low[5:]) == uid:
+                    return low[5:]
     return None
 
 
@@ -424,23 +472,40 @@ def detail(ctx):
             ctx.warn_error(osrc.label, value, "Model Armor logs")
     ok, iam = res["iam"]
     status_payload, internal = iam if ok else (None, None)
-    iam_state = iam_for(email, status_payload, internal)
+    blocked_map = _blocked_map(ctx)
+    iam_state = iam_for(email, status_payload, internal, ctx=ctx, blocked_map=blocked_map, custom_cache={})
     readable = bool(internal and internal.get("readable"))
     bindings = None
+    direct_roles = set()
     if readable:
+        raw_bindings = internal["idx"].user_bindings(email)
+        direct_roles = {role for role, _ in raw_bindings}
         bindings = [{"role": role, "member": "user:%s" % email, "conditional": cond}
-                    for role, cond in internal["idx"].user_bindings(email)]
+                    for role, cond in raw_bindings]
     state = iam_state["state"]
-    enforceable = state not in ("NOT_ENFORCEABLE", "UNKNOWN") and readable
+    repairable = (readable and state == "NOT_ENFORCEABLE" and iam_state["reason"] == "CONFLICTING_BINDINGS" and
+                  governance._unconditional_marker_conflict(internal["idx"], email, internal["cfg"]))
+    enforceable = (state not in ("NOT_ENFORCEABLE", "UNKNOWN") or repairable) and readable
+    ai_block = iam_state.get("aiBlocked")
+    is_ai_blocked = bool(ai_block and ai_block.get("active"))
+    self_or_admin = (email == ctx.identity.email or
+                     is_admin_email(email, (ctx.settings.get("security") or {}).get("admins")))
+    project_priv = readable and bool(direct_roles & set(governance.PROJECT_WIDE_PRIVILEGED_ROLES))
     combined = dict(metrics, **activity_totals)
     out_metrics = {k: (metrics[k] if k in available else None) for k in METRICS}
     series_names = (("gePrompts", "Gemini Enterprise prompts"), ("agentCalls", "Agent calls"),
                     ("notebooklmPrompts", "NotebookLM prompts"), ("antigravityRequests", "Antigravity requests"))
     activity_series = [timeutil.series(k, name, series[k]) for k, name in series_names if k in available]
     iam_out = {"state": state, "reason": iam_state["reason"], "bindings": bindings,
-               "actions": {"allow": enforceable and state in ("BLOCKED_BY_ADMIN", "CAPPED_BY_TOOL", "NO_ACCESS"),
-                           "disallow": enforceable and state in ("ENFORCEABLE_ALLOWED", "CAPPED_BY_TOOL")},
-               "remediation": governance.REMEDIATION.get(iam_state["reason"]) if not enforceable else None}
+               "aiBlocked": ai_block,
+               "actions": {
+                   "allow": enforceable and (state in ("BLOCKED_BY_ADMIN", "CAPPED_BY_TOOL", "NO_ACCESS") or repairable),
+                   "disallow": enforceable and (state in ("ENFORCEABLE_ALLOWED", "CAPPED_BY_TOOL") or repairable),
+                   "blockAll": readable and not self_or_admin and not project_priv and not is_ai_blocked,
+                   "unblockAll": readable and not self_or_admin and bool(ai_block),
+               },
+               "remediation": governance.REMEDIATION.get(iam_state["reason"]) if (not enforceable and state != "UNKNOWN")
+               else None}
     iam_out.update({k: iam_state.get(k) for k in CAP_FIELDS})
     iam_out["currency"] = ((status_payload or {}).get("policy") or {}).get("currency")
     return {"user": {"uid": uid, "email": email, "lastActive": iso(last_active), "surfaces": surfaces_of(combined)},
@@ -449,3 +514,17 @@ def detail(ctx):
             "antigravity": {"byModel": by_model, "byClient": by_client},
             "agents": agents, "files": files, "armorEvents": armor,
             "iam": iam_out}
+
+
+def access_action(ctx):
+    """POST /api/v1/users/access-action {uid, email?, action: block_all | unblock_all, note?}."""
+    uid = ctx.body.get("uid")
+    email = ctx.body.get("email")
+    action = ctx.body.get("action")
+    if action not in ("block_all", "unblock_all"):
+        raise ApiError("bad_request", "Field 'action' must be 'block_all' or 'unblock_all'.")
+    if uid is not None and (not isinstance(uid, str) or len(uid) != 16 or any(c not in "0123456789abcdef" for c in uid)):
+        raise ApiError("bad_request", "Field 'uid' is invalid.")
+    if uid is None and not isinstance(email, str):
+        raise ApiError("bad_request", "Field 'uid' or 'email' is required.")
+    return governance.set_user_ai_access(ctx, action, uid=uid, email=email, note=ctx.body.get("note"))

@@ -288,5 +288,39 @@ class MutationTest(unittest.TestCase):
                                                            "allow": "ENFORCEABLE_ALLOWED"})
 
 
+class EquivalentAndExtraAccessRolesTest(unittest.TestCase):
+    """roles/discoveryengine.user has the exact same 135 permissions as roles/discoveryengine.agentspaceUser, so a
+    person holding either or both must have every replaceable role swapped on block/disallow and must never be shown
+    as BLOCKED_BY_ADMIN while another Antigravity-granting role remains."""
+
+    def test_discoveryengine_user_alone_or_with_agentspace_user_is_enforceable(self):
+        only_de = policy(b("roles/discoveryengine.user", "user:u@example.com"))
+        both = policy(b(ACCESS_ROLE, "user:u@example.com"),
+                      b("roles/discoveryengine.user", "user:u@example.com"),
+                      b("roles/businessaicode.user", "user:u@example.com"),
+                      b("roles/aiplatform.user", "user:u@example.com"))
+        self.assertEqual(classify(only_de, "u@example.com"), ("ENFORCEABLE_ALLOWED", None))
+        self.assertEqual(classify(both, "u@example.com"), ("ENFORCEABLE_ALLOWED", None))
+
+        disallowed = gov.apply_changes(both, [("u@example.com", "disallow")], CFG)
+        self.assertEqual(classify(disallowed, "u@example.com"), ("BLOCKED_BY_ADMIN", None))
+        u_roles = sorted(x["role"] for x in disallowed["bindings"] if "user:u@example.com" in x["members"])
+        self.assertEqual(u_roles, sorted([ADMIN_MARKER, "roles/aiplatform.user"]))
+
+    def test_leftover_discoveryengine_user_with_marker_is_conflicting_never_blocked(self):
+        leftover = policy(b(ADMIN_MARKER, "user:u@example.com"),
+                          b("roles/discoveryengine.user", "user:u@example.com"))
+        self.assertEqual(classify(leftover, "u@example.com"), ("NOT_ENFORCEABLE", "CONFLICTING_BINDINGS"))
+
+    def test_podcast_and_standalone_businessaicode_roles_are_not_enforceable(self):
+        pod = policy(b("roles/discoveryengine.podcastApiUser", "user:p@example.com"))
+        ba_only = policy(b("roles/businessaicode.user", "user:b@example.com"))
+        pod_with_marker = policy(b(ADMIN_MARKER, "user:p@example.com"),
+                                 b("roles/discoveryengine.podcastApiUser", "user:p@example.com"))
+        self.assertEqual(classify(pod, "p@example.com"), ("NOT_ENFORCEABLE", "OTHER_ACCESS_ROLE"))
+        self.assertEqual(classify(ba_only, "b@example.com"), ("NOT_ENFORCEABLE", "OTHER_ACCESS_ROLE"))
+        self.assertEqual(classify(pod_with_marker, "p@example.com"), ("NOT_ENFORCEABLE", "OTHER_ACCESS_ROLE"))
+
+
 if __name__ == "__main__":
     unittest.main()

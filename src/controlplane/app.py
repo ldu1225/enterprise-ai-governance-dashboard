@@ -105,6 +105,8 @@ _route("GET", "/api/v1/model-armor/events", model_armor.events, module="model_ar
 _route("GET", "/api/v1/users", users.list_users, module="users", range=True, cache=True)
 _route("GET", "/api/v1/users/detail", users.detail, module="users", range=True, cache=True,
        mask={"restrict": ("text", "fileName", "fileId")})
+_route("POST", "/api/v1/users/access-action", users.access_action, module="users", admin=True, rate="governance",
+       mask=False)
 _route("GET", "/api/v1/governance/antigravity/status", governance.status, module="antigravity", cache=True, ttl=60)
 _route("GET", "/api/v1/governance/antigravity/billing-report", governance.billing_report, module="antigravity",
        cache=True, ttl=300)
@@ -226,7 +228,7 @@ class ControlPlaneHandler(BaseHandler):
             identity = Identity("anonymous", "viewer", mode, "anon:%s" % self.client_ip())
         else:
             identity = authenticate(self.headers, self.client_ip(), settings, app.verifier, app.environ,
-                                    sessions=app.auth)
+                                    sessions=app.auth, settings_mgr=app.settings)
         guest = identity.auth_mode == GUEST_MODE
         app.limiter.check(identity.rate_key, "general")
         if opts.get("admin_read") and not identity.is_admin:
