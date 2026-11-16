@@ -760,6 +760,81 @@ class AgentGatewayTest(unittest.TestCase):
         self.assertEqual(self.cloud.find("POST", "entries:list"), [])
         self.assertEqual(self.cloud.find("GET", "/timeSeries"), [])
 
+    def test_traffic_retries_transient_log_rate_limits_and_surfaces_quota_notice(self):
+        self.seed_traffic()
+        quota_err = GcpError("unavailable", status=429, reason="RESOURCE_EXHAUSTED", message=UPSTREAM_SECRET)
+        original = self.cloud.request
+        attempts = {"req": 0}
+
+        def flaky(method, url, **kwargs):
+            if url.endswith("entries:list") and "gateway_requests" in kwargs["json_body"]["filter"]:
+                attempts["req"] += 1
+                if attempts["req"] <= 2:
+                    raise quota_err
+            return original(method, url, **kwargs)
+
+        with mock.patch.object(agent_gateway, "LOG_RETRY_DELAYS", (0, 0, 0)):
+            self.app.gcp.request = flaky
+            data, codes, _ = self.data("/api/v1/agent-platform/gateways/traffic?" + RANGE)
+            self.assertEqual(codes, set())
+            self.assertEqual(data["kpis"]["requests"], 6)
+            self.assertEqual(attempts["req"], 3)
+
+            # Persistent 429 surfaces a specific quota notice instead of generic "temporarily unavailable".
+            self.app.cache.clear()
+            self.app.gcp.request = original
+            self.cloud.fail["entries:list"] = quota_err
+            status, payload = self.call("GET", "/api/v1/agent-platform/gateways/traffic?" + RANGE)
+            self.assertEqual(status, 200)
+            req_warn = next(w for w in payload["meta"]["warnings"]
+                            if w["source"] == "logging:networkservices.googleapis.com/gateway_requests")
+            self.assertEqual(req_warn["code"], "upstream_unavailable")
+            self.assertEqual(req_warn["message"], agent_gateway.MSG_LOG_QUOTA)
+            self.assertNotIn(UPSTREAM_SECRET, json.dumps(payload))
+
+            # If page 2 hits 429 after page 1 succeeded, page 1 entries are preserved with truncated=True.
+            self.cloud.fail.pop("entries:list")
+            self.app.cache.clear()
+
+            def page2_rate_limited(method, url, **kwargs):
+                if url.endswith("entries:list") and "gateway_requests" in kwargs["json_body"]["filter"]:
+                    if kwargs["json_body"].get("pageToken"):
+                        raise quota_err
+                    res, headers = original(method, url, **kwargs)
+                    return dict(res, entries=res["entries"][:4], nextPageToken="page-2"), headers
+                return original(method, url, **kwargs)
+
+            self.app.gcp.request = page2_rate_limited
+            status, payload = self.call("GET", "/api/v1/agent-platform/gateways/traffic?" + RANGE)
+            self.assertEqual(status, 200)
+            self.assertEqual(payload["data"]["kpis"]["requests"], 4)
+            self.assertEqual(payload["data"]["sampled"]["requests"], {"read": 4, "truncated": True})
+
+    def test_missing_monitoring_metric_descriptors_produce_no_warnings(self):
+        self.seed_traffic()
+        self.cloud.fail["/timeSeries"] = GcpError("not_found", status=404, reason="NOT_FOUND",
+                                                  message=UPSTREAM_SECRET)
+        data, codes, _ = self.data("/api/v1/agent-platform/gateways/traffic?" + RANGE)
+        self.assertEqual(codes, set())
+        self.assertEqual((data["kpis"]["requests"], data["kpis"]["requestSource"]), (6, "logs"))
+
+    def test_unreadable_gateway_inventory_skips_traffic_logs_and_region_retries(self):
+        self.cloud.fail["/agentGateways"] = GcpError(
+            "denied", status=403,
+            message="Network Services API has not been used in project 123 before or it is disabled. SERVICE_DISABLED")
+        for _ in range(2):
+            status, payload = self.call("GET", "/api/v1/agent-platform/gateways/traffic?" + RANGE)
+            self.assertEqual(status, 200)
+            self.assertIsNone(payload["data"]["kpis"]["requests"])
+            self.assertEqual([(w["source"], w["code"], w["message"]) for w in payload["meta"]["warnings"]],
+                             [("api:networkservices.agentGateways", "not_configured", agent_gateway.MSG_API_DISABLED)])
+        # API disabled does not fan out into per-region retries, and traffic makes zero log or metric calls.
+        self.assertEqual(sorted(c[1] for c in self.cloud.find("GET", "/agentGateways")), [
+            "https://networkservices.googleapis.com/v1/projects/demo-project/locations/-/agentGateways",
+            "https://networkservices.googleapis.com/v1/projects/linked-project/locations/-/agentGateways"])
+        self.assertEqual(self.cloud.find("POST", "entries:list"), [])
+        self.assertEqual(self.cloud.find("GET", "/timeSeries"), [])
+
     # -- create and update ---------------------------------------------------
     def test_create_sends_the_documented_resource(self):
         status, payload = self.post("", {"project": PROJECT, "location": REGION, "name": "new-egress",

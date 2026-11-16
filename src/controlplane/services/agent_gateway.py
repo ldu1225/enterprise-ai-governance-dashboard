@@ -21,6 +21,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import random
 import re
 import time
 import urllib.parse
@@ -81,16 +82,20 @@ LABEL_VALUE_RE = re.compile(r"^[a-z0-9_\-]{0,63}$")
 TEXT_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1, "info": 0}
-MAX_REQUEST_ENTRIES = 5000
-MAX_DECISION_ENTRIES = 3000
-MAX_VERDICT_ENTRIES = 1000
+MAX_REQUEST_ENTRIES = 2000
+MAX_DECISION_ENTRIES = 2000
+MAX_VERDICT_ENTRIES = 500
 MAX_TRAFFIC_PROJECTS = 5
 MAX_ROWS = 50
+LOG_RETRY_DELAYS = (0.8, 1.8, 3.5)
+LOG_READ_DEADLINE_SECONDS = 12.0
 # A management request waits this long for Google Cloud to finish; after that the client polls the operation.
 OPERATION_WAIT_SECONDS = 20
 POLL_SECONDS = 2
 
 MSG_API_DISABLED = "The Network Services API is not enabled in the primary project, so Agent Gateway is not set up."
+MSG_LOG_QUOTA = ("Cloud Logging read quota was temporarily reached. Wait a moment and refresh, or choose a shorter "
+                 "period.")
 MSG_DENIED = ("Google Cloud denied the request. Grant the runtime service account the Agent Gateway management "
               "permissions and check that the Network Services and Network Security APIs are enabled.")
 MSG_UNAVAILABLE = "Google Cloud is temporarily unavailable. Try again shortly."
@@ -172,7 +177,7 @@ def _project_gateways(ctx, project, regions):
         items, unreachable, truncated = _list_all(ctx, url % "-", "agentGateways", {"returnPartialSuccess": "true"})
         return {"items": items, "unreachable": sorted({_short(u) for u in unreachable}), "truncated": truncated}
     except GcpError as err:
-        if err.kind not in ("invalid", "not_found", "denied", "http") or not regions:
+        if _api_disabled(err) or err.kind not in ("invalid", "not_found", "denied", "http") or not regions:
             raise
         first = err
     items, failed, truncated, last = [], [], False, None
@@ -734,22 +739,46 @@ OUTCOMES = (("allowed", "Allowed"), ("denied", "Denied"), ("client_error", "Clie
 DECISIONS = (("granted", "Granted"), ("denied", "Denied"), ("would_block", "Would be blocked (audit-only)"))
 
 
+def _rate_limited(err):
+    return isinstance(err, GcpError) and (err.status == 429 or err.reason == "RESOURCE_EXHAUSTED")
+
+
 def _read_log(ctx, project, flt, limit):
     """Newest entries first. Returns (entries, truncated)."""
-    entries, token = [], None
-    for _ in range(limit // 1000 + 3):
+    entries, token, empty_pages = [], None, 0
+    deadline = time.monotonic() + LOG_READ_DEADLINE_SECONDS
+    max_pages = max(1, (limit + 999) // 1000 + 1)
+    for _ in range(max_pages):
         body = {"resourceNames": ["projects/%s" % project], "filter": flt, "orderBy": "timestamp desc",
                 "pageSize": max(1, min(1000, limit - len(entries)))}
         if token:
             body["pageToken"] = token
-        data = ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body=body, timeout=45)
-        entries.extend(e for e in data.get("entries") or [] if isinstance(e, dict))
-        token = data.get("nextPageToken")
+        data = None
+        for attempt in range(len(LOG_RETRY_DELAYS) + 1):
+            if attempt:
+                delay = LOG_RETRY_DELAYS[attempt - 1]
+                if delay > 0:
+                    time.sleep(delay + random.uniform(0.0, 0.35))
+            try:
+                data = ctx.rest("POST", "%s/entries:list" % LOGGING_V2, json_body=body, timeout=15)
+                break
+            except GcpError as err:
+                if _rate_limited(err) and attempt < len(LOG_RETRY_DELAYS) and time.monotonic() < deadline:
+                    continue
+                if entries:
+                    return entries[:limit], True
+                raise
+        batch = [e for e in (data or {}).get("entries") or [] if isinstance(e, dict)]
+        entries.extend(batch)
+        token = (data or {}).get("nextPageToken")
         if not token:
             return entries[:limit], False
         if len(entries) >= limit:
             return entries[:limit], True
-    return entries[:limit], bool(token)
+        empty_pages = 0 if batch else empty_pages + 1
+        if empty_pages >= 2 or time.monotonic() >= deadline:
+            return entries[:limit], bool(entries)
+    return entries[:limit], bool(token and entries)
 
 
 def _url_parts(url):
@@ -936,7 +965,13 @@ def _metric_series(ctx, project, flt, rng, aligner, reducer, group_by=(), period
     out, token = [], None
     for _ in range(5):
         page = params + ([("pageToken", token)] if token else [])
-        payload = ctx.rest("GET", "%s/projects/%s/timeSeries" % (MONITORING_V3, project), params=page, timeout=45)
+        try:
+            payload = ctx.rest("GET", "%s/projects/%s/timeSeries" % (MONITORING_V3, project), params=page, timeout=30)
+        except GcpError as err:
+            if err.kind == "not_found":
+                # Cloud Monitoring creates a metric descriptor only after the first sample is written.
+                return out
+            raise
         for series in payload.get("timeSeries") or []:
             labels = dict((series.get("resource") or {}).get("labels") or {})
             labels.update((series.get("metric") or {}).get("labels") or {})
@@ -1035,9 +1070,7 @@ def traffic(ctx):
     inv = _inventory(ctx)
     known = inv.get("gateways")
     gateways = known or []
-    selected = _selected(ctx, gateways)
-    scope = [selected] if selected else gateways
-    out = {"scope": {"gateway": selected["key"] if selected else None,
+    out = {"scope": {"gateway": None,
                      "gateways": [{"key": g["key"], "name": g["name"], "project": g["project"],
                                    "location": g["location"]} for g in gateways]},
            "kpis": {"requests": None, "requestSource": None, "denied": None, "errors": None, "unregistered": None,
@@ -1046,7 +1079,13 @@ def traffic(ctx):
            "requestTrend": None, "decisionTrend": None, "byGateway": None, "destinations": None, "mcp": None,
            "deniedRequests": None, "decisions": None, "extensions": None,
            "sampled": {"requests": None, "decisions": None}}
-    if known is not None and not gateways:
+    if known is None:
+        # _inventory already recorded why gateways could not be read; skip querying logs and metrics blindly.
+        return out
+    selected = _selected(ctx, gateways)
+    out["scope"]["gateway"] = selected["key"] if selected else None
+    scope = [selected] if selected else gateways
+    if not gateways:
         # No gateway exists, so there is no gateway traffic to read.
         zero = [0] * len(rng.buckets())
         out["kpis"].update(requests=0, requestSource="logs", denied=0, errors=0, unregistered=0, authorizations=0,
@@ -1101,7 +1140,10 @@ def traffic(ctx):
             ctx.add_source(source)
             return value
         if (project == ctx.project or len(projects) == 1) and not quiet:
-            ctx.warn_error(source, value, what)
+            if _rate_limited(value):
+                ctx.warn(source, "upstream_unavailable", MSG_LOG_QUOTA)
+            else:
+                ctx.warn_error(source, value, what)
         return None
 
     egress = {(g["project"], g["location"], g["name"]) for g in gateways if g["accessPath"] == "AGENT_TO_ANYWHERE"}

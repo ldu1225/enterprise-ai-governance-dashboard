@@ -2758,6 +2758,7 @@ const KO = {
   "No request was denied in this period.": "이 기간에 거부된 요청이 없습니다.",
   "Calls to AI service APIs recorded in Cloud Audit Logs: who called which method and how the API answered, whether or not the call passed through an Agent Gateway.": "Cloud Audit Logs에 기록된 AI 서비스 API 호출 내역입니다. 에이전트 게이트웨이 경유 여부와 관계없이 누가 어떤 메서드를 호출했고 API가 어떻게 응답했는지 보여줍니다.",
   "The Network Services API is not enabled in the primary project, so Agent Gateway is not set up.": "기본 프로젝트에 Network Services API가 사용 설정되어 있지 않아 에이전트 게이트웨이가 구성되지 않았습니다.",
+  "Cloud Logging read quota was temporarily reached. Wait a moment and refresh, or choose a shorter period.": "Cloud Logging 읽기 할당량에 일시적으로 도달했습니다. 잠시 후 새로고침하거나 조회 기간을 더 짧게 선택하십시오.",
   "Google Cloud denied the request. Grant the runtime service account the Agent Gateway management permissions and check that the Network Services and Network Security APIs are enabled.": "Google Cloud에서 요청을 거부했습니다. 런타임 서비스 계정에 에이전트 게이트웨이 관리 권한을 부여하고 Network Services 및 Network Security API가 사용 설정되어 있는지 확인하십시오.",
   "Google Cloud is temporarily unavailable. Try again shortly.": "Google Cloud 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도하십시오.",
   "Agents or Gemini Enterprise apps still route traffic through this gateway. Disassociate them first.": "에이전트 또는 Gemini Enterprise 앱이 여전히 이 게이트웨이로 트래픽을 라우팅하고 있습니다. 먼저 워크로드 연결을 해제하십시오.",
