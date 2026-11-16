@@ -56,7 +56,7 @@ Gemini Enterprise, Gemini Enterprise Agent Platform(Agent Gateway, Agent Registr
 | 개요 | `overview` | 전체 KPI와 이전 기간 대비 증감, 비용 추이, 모델별 토큰, 보안 현황, 에이전트 수명 주기, 최근 거버넌스 조치 | 각 모듈 |
 | Gemini Enterprise | `gemini_enterprise` | 활성 사용자, 프롬프트, 에이전트별 호출, 라이선스 좌석 할당과 휴면 좌석, 업로드 파일 | BigQuery(Gemini Enterprise 로그), Discovery Engine API |
 | NotebookLM | `notebooklm` | 활성 노트북, 사용자, 프롬프트 | BigQuery `cloudaudit_googleapis_com_data_access` |
-| Agent Gateway | `agent_gateway` | AI 서비스 호출 주체, 서비스와 메서드, 성공/거부/제한/오류, 실패 이력, 모델 호출 | BigQuery 감사 로그, Cloud Monitoring |
+| Agent Gateway | `agent_gateway` | 게이트웨이 인벤토리와 거버넌스 점검, 생성·수정·삭제, Identity-Aware Proxy 액세스 인가 설정 및 감사 전용↔적용 전환, 연결 워크로드(Agent Runtime·Gemini Enterprise), 게이트웨이 요청·인가 판정·MCP 트래픽, AI API 호출 감사 로그 | Network Services API, Network Security API, Cloud Logging, Cloud Monitoring, BigQuery 감사 로그 |
 | Agent Registry | `agent_registry` | Agent Engine과 Gemini Enterprise 에이전트 통합 카탈로그, 휴면과 폐기 권고, 생성 이력 | Agent Platform API, Discovery Engine API, 감사 로그 |
 | 에이전트 배포 | `agent_deployments` | Agent Engine 런타임, 실행 ID(서비스 계정), 호출량, ID별 모델 사용량, 런타임 비용 | Agent Platform API, 감사 로그, 결제 내보내기 |
 | Model Armor | `model_armor` | 판정 추이, 필터 일치, 애플리케이션과 사용자별 차단, 이벤트 상세 | BigQuery `modelarmor_googleapis_com_sanitize_operations` |
@@ -563,7 +563,12 @@ NotebookLM Data Access 감사 로그에서 활성 노트북, 사용자, 프롬�
 
 ### 7.4 Agent Gateway
 
-`gateway.services`에 등록한 AI 서비스의 호출 주체, 서비스와 메서드, 결과(성공, 거부, 제한, 오류), 실패 이력, 모델 호출을 감사 로그와 Cloud Monitoring으로 보여 줍니다.
+세 가지 보기(`#/gateway`, `#/gateway/traffic`, `#/gateway/api`)로 에이전트 트래픽의 정책 집행 지점을 관제하고 제어합니다.
+
+- **게이트웨이(`#/gateway`)**: 워크스페이스의 Google 관리형 및 자체 관리형 `agentGateways` 리소스, 연결된 인가 정책(`authzPolicies`)·인가 확장 프로그램(`authzExtensions`)·텔레메트리 정책(`telemetryPolicies`), 연결된 워크로드(Agent Runtime 에이전트와 Gemini Enterprise 앱, 미연결 우회 워크로드 포함), 감사 로그 내보내기 싱크를 점검하고 심각도별 거버넌스 점검 항목(기본 거부 상태, 감사 전용 모드, Fail-Open, 미등록 Agent Registry 등)을 표시합니다. 관리자는 Google 관리형 게이트웨이를 생성·수정·삭제하고, `AGENT_TO_ANYWHERE` 이그레스 게이트웨이에 Identity-Aware Proxy(통합 액세스 정책 V2) 인가 확장 프로그램과 인가 정책을 구성하거나 **감사 전용(DRY_RUN) ↔ 강제 적용(ENFORCED)** 모드를 전환할 수 있습니다. 삭제 시 워크로드 연결 여부를 캐시 없이 재확인하여 사용 중인 게이트웨이의 정책이 먼저 삭제되어 트래픽이 차단되는 사고를 막습니다.
+- **트래픽(`#/gateway/traffic`)**: 게이트웨이 요청 로그(`networkservices.googleapis.com/gateway_requests`), Identity-Aware Proxy 데이터 액세스 감사 로그(`egressViaIAP`), Cloud Monitoring 지표(`https/request_count`, `https/total_latencies`, `extension/invocation_count`, `extension/failed_open_count`), Model Armor 및 시맨틱 거버넌스 판정 로그를 결합해 허용·거부 추이, 감사 전용 모드에서 차단 예정인 에이전트 ID·대상 쌍, 주요 호출 호스트와 Agent Registry 매칭 여부, MCP 메서드·도구 호출, 최근 거부 요청(Cloud Trace 링크 포함)을 보여 줍니다.
+- **AI API 호출(`#/gateway/api`)**: 게이트웨이 경유 여부와 관계없이 `gateway.services`에 등록한 AI 서비스 API 호출 주체, 서비스와 메서드, 결과(성공, 거부, 제한, 오류), 실패 이력, 모델 호출을 BigQuery 감사 로그와 Cloud Monitoring으로 보여 줍니다.
+- **권한 및 필수 API**: 조회에는 `networkservices.googleapis.com`, `networksecurity.googleapis.com` API와 `roles/networkservices.viewer`, `roles/networksecurity.viewer`가 필요합니다(`scripts/deploy.sh`가 대표·연동 프로젝트에 선택 역할로 부여). 생성·수정·삭제 및 액세스 인가 전환은 `ENABLE_GOVERNANCE_ACTIONS=true`(기본값) 배포 시 최소 권한 커스텀 역할 `CustomAiControlPlaneGatewayManager`가 대표 프로젝트에 부여됩니다(`iap.googleapis.com`, `agentregistry.googleapis.com` 함께 사용 권장). Terraform으로 배포했거나 연동 프로젝트의 게이트웨이를 관리하려면 해당 프로젝트에서 런타임 서비스 계정에 같은 권한(또는 `roles/networkservices.editor`, `roles/networksecurity.editor`)을 직접 부여합니다.
 
 ### 7.5 Agent Registry와 에이전트 배포
 
@@ -943,6 +948,7 @@ bq update --time_partitioning_expiration 10368000 PROJECT_ID:ge_analytics.modela
 | Gemini Enterprise·Model Armor 화면만 비어 있음 | v2.1.0 이전 `deploy.sh`가 만든 싱크의 필터 문제입니다([6.1](#61-감사-로그-싱크-bigquery)). `CREATE_LOG_SINK=true`로 `deploy.sh`를 다시 실행하거나 `scripts/prepare.sh`를 실행하면 고쳐지고, 그때부터 들어옵니다. |
 | Gemini Enterprise 사용 로그를 켜지 못했다는 경고 | 실행 계정에 Owner 또는 Gemini Enterprise 관리자(`roles/discoveryengine.agentspaceAdmin`)가 필요합니다. 콘솔에서 직접 켜도 됩니다([6.3](#63-gemini-enterprise-로그)). |
 | 모델별 토큰이 비어 있음 | `roles/monitoring.viewer`, 결제 내보내기 토큰 SKU 존재 여부 |
+| Agent Gateway 목록을 읽지 못함 / 관리 작업이 거부됨 | 프로젝트에 `networkservices.googleapis.com`·`networksecurity.googleapis.com`이 켜져 있는지, 런타임 서비스 계정에 조회 역할(`roles/networkservices.viewer`, `roles/networksecurity.viewer`) 및 관리 커스텀 역할(`CustomAiControlPlaneGatewayManager`)이 있는지 |
 | 라이선스 좌석이 비어 있거나 적게 나옴 | `roles/discoveryengine.viewer`와 라이선스 읽기 커스텀 역할 `CustomAiControlPlaneLicenseReader`(대표·연동 프로젝트 모두), 구독을 배분한 위치가 모두 `DISCOVERY_ENGINE_LOCATIONS`에 있는지(`deploy.env`에서 비워 두고 `scripts/deploy.sh`를 다시 실행하면 다시 감지합니다) |
 | `discoveryengine.*`(licenseConfigs, userLicenses, engines) 또는 `user_activity` 테이블 접근 거부 | 런타임 서비스 계정에 Gemini Enterprise가 있는 프로젝트의 권한이 없습니다. 대개 대시보드를 다른 프로젝트에 설치한 경우입니다. Gemini Enterprise 프로젝트에 설치하거나 `--link-projects`로 연동하고, 이미 설치했다면 [14.5](#145-gemini-enterprise가-다른-프로젝트에-있을-때)의 권한 부여 명령을 실행합니다. |
 | Antigravity 사용자가 0명 | `inference_response` 로그가 프로젝트에 있는지(Antigravity for organizations). 개인 환경의 에이전트는 이 로그를 남기지 않습니다. |
@@ -1073,7 +1079,8 @@ Git이 공개할 파일을 검사해 비밀 정보(개인 키, API 키, OAuth �
 | `GET /api/v1/gemini-enterprise/summary`, `/licenses`, `/file-uploads` | Gemini Enterprise |
 | `GET /api/v1/notebooklm/summary` | NotebookLM |
 | `GET /api/v1/models/usage`, `/catalog` | 모델 및 토큰 |
-| `GET /api/v1/agent-platform/gateway`, `/registry`, `/deployments` | Agent Platform |
+| `GET /api/v1/agent-platform/gateways`, `/gateways/traffic`, `/gateways/operation`, `POST /gateways`, `/gateways/update`, `/gateways/delete`, `/gateways/access` | Agent Gateway 인벤토리·거버넌스 점검, 트래픽 분석, 게이트웨이 및 액세스 인가 관리(변경과 작업 조회는 관리자) |
+| `GET /api/v1/agent-platform/gateway`, `/registry`, `/deployments` | Agent Platform(AI API 호출 감사 로그, Agent Registry, 에이전트 배포) |
 | `GET /api/v1/model-armor/summary`, `/events` | Model Armor |
 | `GET /api/v1/users`, `/users/detail` | 사용자 |
 | `GET /api/v1/governance/antigravity/status` | Antigravity 한도 상태, 단가, 검토 대기열, 정지, 예외 규칙 |

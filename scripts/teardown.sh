@@ -263,7 +263,8 @@ info "Marker roles (delete only when no user holds them; users an administrator 
 info "Default IDs are shown; use your own if you changed governance.antigravity.cap_marker_role or admin_marker_role:"
 info "  gcloud iam roles delete CustomAntigravityCapBlocked --project ${PROJECT_ID}"
 info "  gcloud iam roles delete CustomAntigravityAdminBlocked --project ${PROJECT_ID}"
-info "License reader custom role (its bindings are removed above; another dashboard in the same project may still use it):"
+info "License reader and gateway manager custom roles (bindings are removed above; another dashboard in the same project may still use them):"
+info "  gcloud iam roles delete CustomAiControlPlaneGatewayManager --project ${PROJECT_ID}"
 for lr_project in "$PROJECT_ID" ${TORN_LINKED[@]+"${TORN_LINKED[@]}"}; do
   info "  gcloud iam roles delete CustomAiControlPlaneLicenseReader --project ${lr_project}"
 done

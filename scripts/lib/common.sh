@@ -499,6 +499,10 @@ enable_project_apis() {
     )
     optional_apis=(
       modelarmor.googleapis.com
+      networkservices.googleapis.com
+      networksecurity.googleapis.com
+      agentregistry.googleapis.com
+      iap.googleapis.com
       dlp.googleapis.com
       generativelanguage.googleapis.com
       geminidataanalytics.googleapis.com
@@ -534,6 +538,9 @@ enable_project_apis() {
       iap.googleapis.com
       cloudscheduler.googleapis.com
       modelarmor.googleapis.com
+      networkservices.googleapis.com
+      networksecurity.googleapis.com
+      agentregistry.googleapis.com
       dlp.googleapis.com
       generativelanguage.googleapis.com
       geminidataanalytics.googleapis.com

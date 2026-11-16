@@ -24,6 +24,7 @@ from .services import base as svc_base
 from .services import access
 from .services import oauth_client
 from .services import agent_activity
+from .services import agent_gateway
 from .services import (agents, analyst, finops, gateway, gemini_enterprise, governance, layouts, maintenance,
                        model_armor, models, notebooklm, overview, pricing_sync, system, telemetry, telemetry_routing,
                        users)
@@ -79,6 +80,22 @@ _route("GET", "/api/v1/models/usage", models.usage, module="model_usage", range=
 _route("GET", "/api/v1/models/catalog", models.catalog, module="model_usage", cache=True)
 _route("GET", "/api/v1/agent-platform/gateway", gateway.summary, module="agent_gateway", range=True, cache=True,
        mask={"ips": ("callerIp",)})
+# Agent Gateway (the product): gateways with their authorization policies, extensions, telemetry policies and
+# bound workloads; traffic from the gateway request log, access decisions and metrics. The POST routes create,
+# update and delete gateways and switch access authorization; each call is written to the governance audit log.
+_route("GET", "/api/v1/agent-platform/gateways", agent_gateway.inventory, module="agent_gateway", cache=True, ttl=60)
+_route("GET", "/api/v1/agent-platform/gateways/traffic", agent_gateway.traffic, module="agent_gateway", range=True,
+       cache=True)
+_route("GET", "/api/v1/agent-platform/gateways/operation", agent_gateway.operation, module="agent_gateway",
+       mask=False)
+_route("POST", "/api/v1/agent-platform/gateways", agent_gateway.create, module="agent_gateway", admin=True,
+       rate="governance", mask=False)
+_route("POST", "/api/v1/agent-platform/gateways/update", agent_gateway.update, module="agent_gateway", admin=True,
+       rate="governance", mask=False)
+_route("POST", "/api/v1/agent-platform/gateways/delete", agent_gateway.delete, module="agent_gateway", admin=True,
+       rate="governance", mask=False)
+_route("POST", "/api/v1/agent-platform/gateways/access", agent_gateway.access, module="agent_gateway", admin=True,
+       rate="governance", mask=False)
 _route("GET", "/api/v1/agent-platform/registry", agents.registry, module="agent_registry", range=True, cache=True)
 _route("GET", "/api/v1/agent-platform/deployments", agents.deployments, module="agent_deployments", range=True,
        cache=True)

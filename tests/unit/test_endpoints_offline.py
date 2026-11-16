@@ -105,7 +105,8 @@ ENDPOINTS = [
     "/api/v1/overview/summary", "/api/v1/overview/summary?granularity=week&start=2026-09-01&end=2026-10-19",
     "/api/v1/gemini-enterprise/summary", "/api/v1/gemini-enterprise/licenses",
     "/api/v1/gemini-enterprise/file-uploads", "/api/v1/notebooklm/summary", "/api/v1/models/usage",
-    "/api/v1/models/catalog", "/api/v1/agent-platform/gateway", "/api/v1/agent-platform/registry",
+    "/api/v1/models/catalog", "/api/v1/agent-platform/gateway", "/api/v1/agent-platform/gateways",
+    "/api/v1/agent-platform/gateways/traffic", "/api/v1/agent-platform/registry",
     "/api/v1/agent-platform/deployments", "/api/v1/model-armor/summary",
     "/api/v1/model-armor/events?verdict=all&filter=sdp", "/api/v1/users", "/api/v1/governance/antigravity/status",
     "/api/v1/governance/antigravity/status?period=weekly&window=rolling", "/api/v1/governance/audit-log",
@@ -260,6 +261,10 @@ class OfflineEndpointsTest(unittest.TestCase):
             self.assertIn("topStatuses", results[path])
         if self.mode == "empty":
             # Sources succeeded without rows: lists are empty (not null) and counters are zero.
+            self.assertEqual(results["/api/v1/agent-platform/gateways"]["gateways"], [])
+            self.assertEqual(results["/api/v1/agent-platform/gateways"]["kpis"]["gateways"], 0)
+            self.assertEqual(results["/api/v1/agent-platform/gateways/traffic"]["kpis"]["requests"], 0)
+            self.assertEqual(results["/api/v1/agent-platform/gateways/traffic"]["byGateway"], [])
             self.assertEqual(results["/api/v1/agent-platform/registry"]["agents"], [])
             self.assertEqual(results["/api/v1/agent-platform/registry"]["kpis"]["total"], 0)
             self.assertEqual(results["/api/v1/model-armor/summary"]["byApp"], [])

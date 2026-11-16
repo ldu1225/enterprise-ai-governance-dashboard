@@ -56,7 +56,7 @@ Click **Open in Cloud Shell** above or run `scripts/install.sh` in Cloud Shell t
 | Overview | `overview` | Overall KPIs with change vs the previous period, spend trend, tokens by model, security posture, agent lifecycle, recent governance actions | Each module |
 | Gemini Enterprise | `gemini_enterprise` | Active users, prompts, calls per agent, license seat assignment and idle seats, uploaded files | BigQuery (Gemini Enterprise logs), Discovery Engine API |
 | NotebookLM | `notebooklm` | Active notebooks, users, prompts | BigQuery `cloudaudit_googleapis_com_data_access` |
-| Agent Gateway | `agent_gateway` | Principals calling AI services, services and methods, success/denied/throttled/error, failure history, model invocations | BigQuery audit logs, Cloud Monitoring |
+| Agent Gateway | `agent_gateway` | Gateway inventory and governance posture, create/update/delete, Identity-Aware Proxy access authorization setup and audit-only ↔ enforced switching, bound workloads (Agent Runtime and Gemini Enterprise), gateway request/authorization/MCP traffic, AI API audit calls | Network Services API, Network Security API, Cloud Logging, Cloud Monitoring, BigQuery audit logs |
 | Agent Registry | `agent_registry` | Unified catalog of Agent Engine and Gemini Enterprise agents, idle agents and deprecation candidates, creation history | Agent Platform API, Discovery Engine API, audit logs |
 | Deployments | `agent_deployments` | Agent Engine runtimes, runtime identities (service accounts), invocation volume, model usage by identity, runtime cost | Agent Platform API, audit logs, billing export |
 | Model Armor | `model_armor` | Verdicts over time, matched filters, blocks by application and user, event details | BigQuery `modelarmor_googleapis_com_sanitize_operations` |
@@ -568,7 +568,12 @@ Counts active notebooks, users and prompts from NotebookLM Data Access audit log
 
 ### 7.4 Agent Gateway
 
-Shows the calling principals, services and methods, outcomes (success, denied, throttled, error), failure history and model invocations for the AI services registered in `gateway.services`, based on audit logs and Cloud Monitoring.
+Governs and monitors the policy enforcement points for agent traffic across three views (`#/gateway`, `#/gateway/traffic`, `#/gateway/api`):
+
+- **Gateways (`#/gateway`)**: Lists Google-managed and self-managed `agentGateways` across the workspace together with their attached `authzPolicies`, `authzExtensions`, `telemetryPolicies`, bound and bypassing workloads (Agent Runtime agents and Gemini Enterprise apps), Log Router audit export sinks, and severity-ranked governance findings (default-deny egress without a policy, audit-only access authorization, fail-open extensions, missing or mismatched Agent Registry, and observability gaps). Administrators can create, update and delete Google-managed gateways, attach Identity-Aware Proxy (Unified Access Policies V2) authorization extensions and policies to `AGENT_TO_ANYWHERE` gateways, and switch enforcement between **audit-only (`DRY_RUN`)** and **enforced (`ENFORCED`)**. Before deleting policies, the service re-checks live workload bindings without caches so an active gateway is never stripped of its policies and turned default-deny.
+- **Traffic (`#/gateway/traffic`)**: Combines gateway request logs (`networkservices.googleapis.com/gateway_requests`), Identity-Aware Proxy Data Access audit logs (`egressViaIAP`), Cloud Monitoring metrics (`https/request_count`, `https/total_latencies`, `extension/invocation_count`, `extension/failed_open_count`), and Model Armor / semantic governance verdict logs to show allow and deny trends, agent-identity-to-destination pairs that were denied or would be blocked once enforced, top destination hosts with Agent Registry match status, inspected MCP methods and tools, and recent denied requests with Cloud Trace links.
+- **AI API calls (`#/gateway/api`)**: Shows the calling principals, services and methods, outcomes (success, denied, throttled, error), failure history and model invocations for the AI services registered in `gateway.services`, whether or not the call passed through an Agent Gateway.
+- **APIs and IAM**: Reading gateways requires `networkservices.googleapis.com`, `networksecurity.googleapis.com`, `roles/networkservices.viewer` and `roles/networksecurity.viewer` (granted as optional roles by `scripts/deploy.sh` on the primary and linked projects). Creating, updating or deleting gateways and managing access authorization use the least-privilege custom role `CustomAiControlPlaneGatewayManager`, granted on the primary project when `ENABLE_GOVERNANCE_ACTIONS=true` (the default; also enable `iap.googleapis.com` and `agentregistry.googleapis.com`). For Terraform deployments or gateways in linked projects, grant those permissions (or `roles/networkservices.editor` and `roles/networksecurity.editor`) to the runtime service account on each target project.
 
 ### 7.5 Agent Registry and Deployments
 
@@ -952,6 +957,7 @@ bq update --time_partitioning_expiration 10368000 PROJECT_ID:ge_analytics.modela
 | Only the Gemini Enterprise and Model Armor pages are empty | The filter of a sink created by `deploy.sh` before v2.1.0 ([6.1](#61-audit-log-sink-bigquery)). Run `deploy.sh` again with `CREATE_LOG_SINK=true`, or run `scripts/prepare.sh`; the logs arrive from then on. |
 | Warning that Gemini Enterprise usage logs could not be turned on | The running account needs Owner or Gemini Enterprise Admin (`roles/discoveryengine.agentspaceAdmin`). You can also turn them on in the console ([6.3](#63-gemini-enterprise-logs)). |
 | Tokens by model are empty | `roles/monitoring.viewer`, and whether token SKUs exist in the billing export |
+| Agent Gateways cannot be read or management actions are denied | Whether `networkservices.googleapis.com` and `networksecurity.googleapis.com` are enabled in the project, and whether the runtime service account has `roles/networkservices.viewer`, `roles/networksecurity.viewer`, and (for management) `CustomAiControlPlaneGatewayManager` |
 | License seats are empty or too low | `roles/discoveryengine.viewer` and the license reader custom role `CustomAiControlPlaneLicenseReader` (in the primary and every linked project), and whether every location your subscriptions are distributed to is in `DISCOVERY_ENGINE_LOCATIONS` (leave it empty in `deploy.env` and run `scripts/deploy.sh` again to detect them) |
 | Access denied on `discoveryengine.*` (licenseConfigs, userLicenses, engines) or on the `user_activity` table | The runtime service account has no access to the project where Gemini Enterprise runs, usually because the dashboard was installed into another project. Install into the Gemini Enterprise project or link it with `--link-projects`; for a dashboard that is already installed, run the grant commands in [14.5](#145-when-gemini-enterprise-lives-in-another-project). |
 | 0 Antigravity users | Whether the `inference_response` log exists in the project (Antigravity for organizations). Agents in a personal setup do not write this log. |
@@ -1082,7 +1088,8 @@ It scans the files Git would publish and fails on secrets (private keys, API key
 | `GET /api/v1/gemini-enterprise/summary`, `/licenses`, `/file-uploads` | Gemini Enterprise |
 | `GET /api/v1/notebooklm/summary` | NotebookLM |
 | `GET /api/v1/models/usage`, `/catalog` | Models & Tokens |
-| `GET /api/v1/agent-platform/gateway`, `/registry`, `/deployments` | Agent Platform |
+| `GET /api/v1/agent-platform/gateways`, `/gateways/traffic`, `/gateways/operation`, `POST /gateways`, `/gateways/update`, `/gateways/delete`, `/gateways/access` | Agent Gateway inventory, governance posture, traffic and management (writes and operation polling are administrator-only) |
+| `GET /api/v1/agent-platform/gateway`, `/registry`, `/deployments` | Agent Platform (AI API audit calls, Agent Registry, Deployments) |
 | `GET /api/v1/model-armor/summary`, `/events` | Model Armor |
 | `GET /api/v1/users`, `/users/detail` | Users |
 | `GET /api/v1/governance/antigravity/status` | Antigravity cap status, unit prices, review queue, suspensions, exception rules |

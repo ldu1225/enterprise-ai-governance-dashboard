@@ -512,6 +512,8 @@ RUNTIME_ROLES=(
 OPTIONAL_RUNTIME_ROLES=(
   roles/modelarmor.viewer
   roles/cloudtrace.user
+  roles/networkservices.viewer
+  roles/networksecurity.viewer
 )
 GOVERNANCE_ROLES=(roles/resourcemanager.projectIamAdmin roles/iam.roleAdmin)
 for role in "${RUNTIME_ROLES[@]}"; do grant_member "$PROJECT_ID" "serviceAccount:${SA_EMAIL}" "$role"; done
@@ -541,6 +543,27 @@ if [[ "$ENABLE_GOVERNANCE_ACTIONS" == "true" ]]; then
   # Marker roles for per-user Antigravity caps (Gemini Enterprise User without businessaicode.*), created now so
   # suspensions work right after installation without the "Create marker roles" step.
   ensure_antigravity_marker_roles "$PROJECT_ID"
+  # Least-privilege custom role for managing Agent Gateway resources, IAP authorization extensions and policies.
+  GATEWAY_MANAGER_ROLE_ID="CustomAiControlPlaneGatewayManager"
+  GATEWAY_MANAGER_ROLE="projects/${PROJECT_ID}/roles/${GATEWAY_MANAGER_ROLE_ID}"
+  GATEWAY_MANAGER_PERMS="networkservices.agentGateways.create,networkservices.agentGateways.update,networkservices.agentGateways.delete,networkservices.agentGateways.get,networkservices.agentGateways.list,networkservices.agentGateways.use,networkservices.authzExtensions.create,networkservices.authzExtensions.update,networkservices.authzExtensions.delete,networkservices.authzExtensions.get,networkservices.authzExtensions.list,networkservices.authzExtensions.use,networkservices.operations.get,networksecurity.authzPolicies.create,networksecurity.authzPolicies.delete,networksecurity.authzPolicies.get,networksecurity.authzPolicies.list,networksecurity.operations.get"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    info "[dry-run] custom role ${GATEWAY_MANAGER_ROLE} -> ${SA_EMAIL}"
+  else
+    gcloud iam roles undelete "$GATEWAY_MANAGER_ROLE_ID" --project "$PROJECT_ID" --quiet >/dev/null 2>&1 || true
+    if gcloud iam roles describe "$GATEWAY_MANAGER_ROLE_ID" --project "$PROJECT_ID" >/dev/null 2>&1; then
+      gcloud iam roles update "$GATEWAY_MANAGER_ROLE_ID" --project "$PROJECT_ID" --permissions "$GATEWAY_MANAGER_PERMS" --quiet >/dev/null 2>&1 || true
+      grant_optional_role "$PROJECT_ID" "serviceAccount:${SA_EMAIL}" "$GATEWAY_MANAGER_ROLE"
+    elif gcloud iam roles create "$GATEWAY_MANAGER_ROLE_ID" --project "$PROJECT_ID" \
+        --title "AI Control Plane Agent Gateway Manager" \
+        --description "Manage Agent Gateway resources, authorization extensions and policies" \
+        --permissions "$GATEWAY_MANAGER_PERMS" --stage GA --quiet >/dev/null 2>&1; then
+      grant_optional_role "$PROJECT_ID" "serviceAccount:${SA_EMAIL}" "$GATEWAY_MANAGER_ROLE"
+    else
+      grant_optional_role "$PROJECT_ID" "serviceAccount:${SA_EMAIL}" "roles/networkservices.editor"
+      grant_optional_role "$PROJECT_ID" "serviceAccount:${SA_EMAIL}" "roles/networksecurity.editor"
+    fi
+  fi
 else
   info "governance write roles skipped (ENABLE_GOVERNANCE_ACTIONS=false): dashboards and simulations only"
 fi
@@ -591,6 +614,8 @@ if [[ -n "$SCAN_PROJECTS" ]]; then
     roles/discoveryengine.viewer
     roles/iam.securityReviewer
     roles/modelarmor.viewer
+    roles/networkservices.viewer
+    roles/networksecurity.viewer
   )
   # Telemetry routes of a linked project's logs are Log Router sinks in that project (cost-controlled from the hub).
   [[ "${ENABLE_LINKED_TELEMETRY_ROUTING:-true}" == "true" ]] && LINKED_READ_ROLES+=(roles/logging.configWriter)
