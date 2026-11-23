@@ -1055,7 +1055,7 @@ function renderApiCalls(body, d) {
         { key: 'lastSeen', label: t('Last seen'), render: (r) => (r.lastSeen ? fmt.relative(r.lastSeen) : DASH), value: (r) => r.lastSeen },
       ],
       rows: d.topPrincipals, pageSize: 8, exportName: 'gateway-callers', initialSort: { key: 'requests', dir: 'desc' },
-      onRowClick: (r) => (r.type === 'user' && r.uid ? openUserDrawer(r.uid) : null),
+      onRowClick: (r) => (r.type === 'user' && r.uid ? openUserDrawer(r.uid, { email: r.principal }) : null),
     }),
   });
   callers.classList.add('span-7');

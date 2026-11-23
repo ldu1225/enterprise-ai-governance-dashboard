@@ -146,6 +146,8 @@ class Harness:
             "send_webhook": mock.MagicMock(return_value=False),
             # Automatic token prices (billing export / price list) are not part of these tests.
             "price_table": mock.MagicMock(return_value=None),
+            # Neither are license tiers (Gemini Enterprise license API): everyone gets credit_per_user_month.
+            "license_credits": mock.MagicMock(return_value={}),
         }
         if self.iam is not None:
             del targets["marker_status"]

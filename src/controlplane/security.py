@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass
 
 from .httpkit import ApiError
+from .identity import mask_workforce_in_text
 
 LOG = logging.getLogger("controlplane.security")
 
@@ -214,6 +215,8 @@ SCHEDULER_MODE = "scheduler"
 # Endpoints the deployment's own runtime service account may call with a Cloud Scheduler OIDC token.
 MAINTENANCE_PATHS = frozenset({"/api/v1/system/maintenance", "/api/v1/finops/pricing/sync",
                                "/api/v1/telemetry/routing/enforce"})
+# Pub/Sub push endpoints: the push subscription authenticates with an OIDC token of the runtime service account.
+PUSH_PATHS = frozenset({"/api/v1/governance/antigravity/usage-event"})
 _RUNTIME_SA = {"value": None, "checked": False}
 _RUNTIME_SA_LOCK = threading.Lock()
 
@@ -247,11 +250,12 @@ def runtime_service_account(environ=None):
 def scheduler_identity(headers, settings, verifier, path):
     """Identity of a Cloud Scheduler call authenticated with a Google OIDC token (Authorization:
     Bearer). Service accounts in governance.antigravity.scheduler_invokers are accepted on every scheduler route;
-    the deployment's own runtime service account is accepted on the maintenance routes (MAINTENANCE_PATHS). The
-    token audience must be this deployment's public URL (with or without the path)."""
+    the deployment's own runtime service account is accepted on the maintenance routes (MAINTENANCE_PATHS) and on the
+    Pub/Sub push routes (PUSH_PATHS). The token audience must be this deployment's public URL (with or without the
+    path)."""
     ag = (settings.get("governance") or {}).get("antigravity") or {}
     invokers = [str(e).strip().lower() for e in ag.get("scheduler_invokers") or []]
-    if path in MAINTENANCE_PATHS:
+    if path in MAINTENANCE_PATHS or path in PUSH_PATHS:
         own = runtime_service_account()
         if own and own not in invokers:
             invokers.append(own)
@@ -329,7 +333,10 @@ def authenticate(headers, peer, settings, verifier, environ=None, sessions=None,
 # ---------------------------------------------------------------------------
 
 # guest_ai: AI calls (analyst, spike analysis) of all guests together, on top of each guest's own "ai" bucket.
-RATE_LIMITS = {"general": 240, "ai": 20, "governance": 10, "refresh": 6, "login": 120, "guest_ai": 30}
+# usage_event: the Pub/Sub push of Antigravity inference log entries (one call per request of every user), used instead
+# of "general" on that route only.
+RATE_LIMITS = {"general": 240, "ai": 20, "governance": 10, "refresh": 6, "login": 120, "guest_ai": 30,
+               "usage_event": 6000}
 
 
 class RateLimiter:
@@ -401,7 +408,12 @@ def mask_email(value):
 
 
 def mask_text_emails(text):
-    if not isinstance(text, str) or "@" not in text:
+    """Masks e-mails and the subjects of workforce identity principals in `text` (viewer and guest responses)."""
+    if not isinstance(text, str):
+        return text
+    if "principal://" in text.lower():
+        text = mask_workforce_in_text(text)
+    if "@" not in text:
         return text
     return EMAIL_IN_TEXT_RE.sub(lambda m: mask_email(m.group(0)), text)
 

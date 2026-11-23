@@ -7,6 +7,7 @@ import unittest
 import support
 from support import ACCESS_ROLE, ADMIN_MARKER, CAP_MARKER, LEGACY_MARKER
 
+from controlplane import config
 from controlplane.services import governance as gov
 
 CFG = gov.gov_config(support.make_settings(governance={"extra_access_roles": ["roles/discoveryengine.editor"]}))
@@ -94,19 +95,32 @@ class ClassifierTest(unittest.TestCase):
 
 
 class CapModelTest(unittest.TestCase):
-    """cap_model empty (the default): credit caps for new installations, fixed caps kept on upgrades."""
+    """cap_model empty (the default): fixed caps per period for new installations; installations that relied on
+    credit caps (a paid budget, no fixed cap) keep them on upgrades."""
 
-    def test_new_installations_use_credit_caps(self):
-        self.assertTrue(gov.credit_mode({}))
-        self.assertTrue(gov.credit_mode({"cap_model": "", "cost_cap": 0, "token_cap": 0, "request_cap": 0}))
+    def test_new_installations_use_fixed_period_caps(self):
+        self.assertFalse(gov.credit_mode({}))
+        self.assertFalse(gov.credit_mode({"cap_model": "", "cost_cap": 0, "token_cap": 0, "request_cap": 0,
+                                          "paid_budget_month": -1, "org_paid_budget_month": -1}))
+        self.assertFalse(gov.credit_mode(config.DEFAULTS["governance"]["antigravity"]))
 
     def test_upgrades_with_fixed_caps_keep_them(self):
         for key in gov.PERIOD_CAP_KEYS:
             self.assertFalse(gov.credit_mode({"cap_model": "", key: 5}), key)
+            # Fixed caps win over a paid budget, as before.
+            self.assertFalse(gov.credit_mode({"cap_model": "", key: 5, "paid_budget_month": 100}), key)
+
+    def test_upgrades_with_credit_budgets_keep_them(self):
+        for key in gov.CREDIT_BUDGET_KEYS:
+            self.assertTrue(gov.credit_mode({"cap_model": "", key: 100}), key)
+            self.assertTrue(gov.credit_mode({"cap_model": "", key: 0}), key)   # credits only is a limit too
+            self.assertFalse(gov.credit_mode({"cap_model": "", key: -1}), key)  # no limit
 
     def test_an_explicit_choice_wins(self):
         self.assertTrue(gov.credit_mode({"cap_model": "credit_budget", "cost_cap": 5}))
+        self.assertTrue(gov.credit_mode({"cap_model": "credit_budget"}))
         self.assertFalse(gov.credit_mode({"cap_model": "period"}))
+        self.assertFalse(gov.credit_mode({"cap_model": "period", "paid_budget_month": 100}))
 
 
 def user(uid, state, over):
