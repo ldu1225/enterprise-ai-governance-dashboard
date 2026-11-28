@@ -10,7 +10,7 @@ becomes `dulee-gcp-altostrat-com`). Row buttons also carry
 | Element | Selector |
 |---|---|
 | Login password / submit | `#login-password`, `#login-submit` |
-| Vendor strip (OpenAI / Anthropic / Google) | `#vendor-strip`, `#vendor-openai`, `#vendor-anthropic`, `#vendor-google` |
+| Integration chip (Google Gemini) | `#vendor-strip`, `#vendor-google` |
 | Hub / Spoke chips, API health | `#hub-chip`, `#spoke-chip`, `#health-badge` |
 | Refresh / email mask / theme / logout | `#refresh-btn`, `#mask-toggle`, `#theme-toggle`, `#logout-btn` |
 | Global filters | `#proj-all`, `#proj-hub`, `#proj-spoke`, `#filter-start`, `#filter-end`, `#fresh-toggle` |

@@ -4,6 +4,25 @@
 
 외부 Python/JS 패키지 의존성 없이 Python 3.12 표준 라이브러리와 모던 HTML/CSS/Vanilla JS만으로 동작합니다.
 
+## 데모 영상 (실환경 · 8분 54초)
+
+[![Gemini 거버넌스 REST API 실환경 데모 영상](../docs/assets/video/gov-demo-poster.jpg)](https://ai-control-plane-hub-484712896449.us-central1.run.app/api/#featured-film-title)
+
+아키텍처 → Caps API 명세서(사용량·비용, 한도·차단, 그룹, 모델 통제, 쿼터, 보안) → 이 콘솔 투어 → 즉시 차단 · 예산 초과 자동 차단 · 모델 위반 · 조직 정책 영향도 미리보기 · 비용과 감사 로그. 테스트 사용자의 실제 Gemini 호출이 IAM Deny로 403 차단되고 다시 풀리는 과정을 그대로 담았습니다. 한국어 내레이션과 자막이 포함되어 있습니다.
+
+- 영상 재생: [엔게이지먼트 허브 · API 탭](https://ai-control-plane-hub-484712896449.us-central1.run.app/api/#featured-film-title)
+- MP4 직접 받기: [gemini-governance-rest-api-demo.mp4](https://ai-control-plane-hub-484712896449.us-central1.run.app/media/video/gemini-governance-rest-api-demo.f6da34e25f.mp4) (131 MB, GitHub 100 MB 파일 제한 때문에 저장소 대신 허브에서 제공합니다.)
+
+## 접속 URL
+
+| 환경 | URL |
+|---|---|
+| Cloud Run (`duleetest`, `asia-northeast3`) | https://caps-dashboard-484712896449.asia-northeast3.run.app |
+| 로컬 | `http://localhost:8090` (`python3 caps-dashboard/server.py`) |
+
+로그인 비밀번호는 로컬 콘솔과 같은 관리자 비밀번호입니다(`deploy.sh`가 `.local_admin_hash`를 Secret Manager로 옮깁니다).
+
+
 ## 주요 기능
 
 1. **개요 & 유저 트래킹 (`duleetest` Hub · `dulee-ai-test` Spoke)**
@@ -44,9 +63,22 @@ python3 caps-dashboard/server.py
 
 브라우저에서 **`http://localhost:8090`** 으로 접속해 최초 로컬 관리자 비밀번호(12자 이상)를 설정하면 바로 `duleetest`와 `dulee-ai-test`를 제어할 수 있습니다.
 
-## Cloud Run 배포 예시
+## Cloud Run 배포
 
-Cloud Run 배포 시에는 반드시 `CAPS_API_KEY`, `DASHBOARD_SESSION_SECRET`(32자 이상), `DASHBOARD_ADMIN_PASSWORD_HASH`(`scrypt$<salt>$<hash>`)를 Secret Manager로 주입해야 합니다.
+명령 한 번으로 배포합니다. `caps-dashboard/.env`의 `CAPS_API_BASE_URL`·`CAPS_API_KEY`·`HUB_PROJECT`·`SPOKE_PROJECTS`와 로컬 관리자 비밀번호 해시(`.local_admin_hash`)를 읽습니다.
+
+```bash
+bash caps-dashboard/deploy.sh          # PROJECT_ID=duleetest REGION=asia-northeast3 SERVICE_NAME=caps-dashboard (기본값)
+```
+
+스크립트가 하는 일:
+
+1. Cloud Run · Cloud Build · Artifact Registry · Secret Manager API 활성화
+2. 전용 서비스 계정 `caps-dashboard-sa` 생성. 권한은 아래 시크릿 3개 읽기뿐입니다(콘솔은 Caps REST API만 호출하고 Google Cloud API를 직접 부르지 않습니다).
+3. Secret Manager에 `caps-dashboard-api-key`(`CAPS_API_KEY`), `caps-dashboard-session-secret`(`DASHBOARD_SESSION_SECRET`, 최초 1회 생성), `caps-dashboard-admin-hash`(`DASHBOARD_ADMIN_PASSWORD_HASH`) 저장. 값이 바뀐 경우에만 새 버전을 추가합니다.
+4. `gcloud run deploy --source`로 빌드·배포. `.gcloudignore`가 `.env`, `.local_admin_hash`를 업로드에서 제외합니다.
+
+다른 비밀번호를 쓰려면 해시를 만들어 `DASHBOARD_ADMIN_PASSWORD_HASH`로 넘깁니다.
 
 ```bash
 # scrypt 비밀번호 해시 생성 예시 (로컬에서 1회 실행 후 Secret Manager에 저장)
@@ -64,6 +96,6 @@ python3 -m unittest discover -s caps-dashboard/tests -v
 - **API 호출 보기 (API Call Inspector)**: 헤더의 `API 호출 보기` 버튼을 누르면, BFF가 화면 동작마다 호출한 `gcp-ai-usage-caps-api` `/v1/*` 요청이 실시간으로 표시됩니다(메서드, 경로, 상태, 지연, 요청 본문, 응답 일부). 호출 기록은 세션별 링 버퍼(`GET /api/_trace?since=`)에 저장되며 Authorization 헤더와 API 키는 기록하지 않습니다.
 - **사용자 드릴다운**: Hub/Spoke별 및 모델별 비용, 일별 추이, 한도 게이지, 감사 이력, IAM Deny 집행 상태(`propagating` → `enforced`)를 경과 시간과 함께 실시간으로 추적합니다(`GET /api/user/cap?fresh=true` 폴링).
 - **비용 탐색기** (`GET /api/costs`), **모델 거버넌스** (Org Policy Dry-run → 적용, 모델 규칙 평가), **정책 & G1–G7**, **감사 & 위반** 탭.
-- OpenAI · Anthropic은 "기존 연동 (별도 시스템)" 표시만 하며 수치는 보여주지 않습니다. 화면의 모든 수치는 Caps API에서 받은 값입니다.
+- 개요의 **서비스 거버넌스 커버리지** 카드는 Caps API가 통제하는 Google Cloud AI 서비스(Gemini Platform · Antigravity · Gemini Enterprise)를 보여줍니다. 화면의 모든 수치는 Caps API에서 받은 값입니다.
 - Playwright 촬영용 selector 목록: [`UI_IDS.md`](UI_IDS.md)
 - 로컬 테스트 인스턴스: `PORT=8097 DASHBOARD_ADMIN_PASSWORD='<12자 이상>' python3 caps-dashboard/server.py`. 이 경우 비밀번호는 메모리에서만 해시되며 `.local_admin_hash`를 변경하지 않습니다.

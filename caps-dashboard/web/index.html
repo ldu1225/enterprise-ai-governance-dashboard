@@ -25,12 +25,10 @@
           <h1 id="auth-title">AI 거버넌스 콘솔</h1>
         </div>
       </div>
-      <p class="auth-sub" id="auth-subtitle">OpenAI · Anthropic · Google Gemini 사용량과 통제를 하나의 콘솔에서</p>
+      <p class="auth-sub" id="auth-subtitle">Google Cloud AI 사용량과 통제를 하나의 콘솔에서</p>
 
-      <ul class="auth-vendors" aria-label="연동 벤더">
-        <li class="vendor-pill legacy"><span class="vmono v-openai" aria-hidden="true">O</span>OpenAI<small>기존 연동</small></li>
-        <li class="vendor-pill legacy"><span class="vmono v-anthropic" aria-hidden="true">A</span>Anthropic<small>기존 연동</small></li>
-        <li class="vendor-pill new"><span class="vmono v-google" aria-hidden="true">G</span>Google Gemini<small>Caps API 신규</small></li>
+      <ul class="auth-vendors" aria-label="연동 서비스">
+        <li class="vendor-pill new"><span class="vmono v-google" aria-hidden="true">G</span>Google Gemini<small>Caps REST API</small></li>
       </ul>
 
       <div id="auth-alert" class="inline-alert danger" role="alert" hidden></div>
@@ -121,15 +119,9 @@
 
     <div class="main">
       <header class="topbar glass">
-        <ul id="vendor-strip" class="vendor-strip" aria-label="AI 벤더 연동 현황">
-          <li class="vendor-chip legacy" id="vendor-openai" title="별도 시스템에서 관리 — 이 콘솔의 Google 수치에는 포함되지 않습니다">
-            <span class="vmono v-openai" aria-hidden="true">O</span><span class="vname">OpenAI</span><span class="vstate">기존 연동 · 별도 시스템</span>
-          </li>
-          <li class="vendor-chip legacy" id="vendor-anthropic" title="별도 시스템에서 관리 — Gemini Platform 경유 Claude 사용량은 Google 데이터에 포함">
-            <span class="vmono v-anthropic" aria-hidden="true">A</span><span class="vname">Anthropic</span><span class="vstate">기존 연동 · 별도 시스템</span>
-          </li>
-          <li class="vendor-chip new" id="vendor-google" title="gcp-ai-usage-caps-api REST로 신규 연동">
-            <span class="vmono v-google" aria-hidden="true">G</span><span class="vname">Google Gemini</span><span class="vstate"><span class="live-dot" aria-hidden="true"></span>Caps API 신규 연동</span>
+        <ul id="vendor-strip" class="vendor-strip" aria-label="AI 연동 현황">
+          <li class="vendor-chip new" id="vendor-google" title="gcp-ai-usage-caps-api REST 연동">
+            <span class="vmono v-google" aria-hidden="true">G</span><span class="vname">Google Gemini</span><span class="vstate"><span class="live-dot" aria-hidden="true"></span>Caps REST API 연동</span>
           </li>
         </ul>
 
@@ -186,7 +178,7 @@
             <div class="hero-copy">
               <span class="hero-tag"><span class="live-dot" aria-hidden="true"></span>신규 연동 완료</span>
               <h2>Google Gemini 거버넌스가 콘솔에 합류했습니다</h2>
-              <p>OpenAI · Anthropic에 이어 Google Cloud AI(<b>Gemini Platform</b> · <b>Antigravity</b> · <b>Gemini Enterprise</b>)의 사용량, 비용, 차단 통제가 <code>gcp-ai-usage-caps-api</code> REST API만으로 이 콘솔에 통합되었습니다.</p>
+              <p>Google Cloud AI(<b>Gemini Platform</b> · <b>Antigravity</b> · <b>Gemini Enterprise</b>)의 사용량, 비용, 차단 통제가 <code>gcp-ai-usage-caps-api</code> REST API만으로 이 콘솔에 통합되었습니다.</p>
             </div>
             <div class="hero-stats" id="hero-stats"></div>
           </div>
@@ -199,7 +191,7 @@
               <div id="project-cards" class="project-cards"></div>
             </div>
             <div class="card glass">
-              <div class="card-head"><h3>벤더 거버넌스 커버리지</h3><span class="card-sub">사내 콘솔 통합 현황</span></div>
+              <div class="card-head"><h3>서비스 거버넌스 커버리지</h3><span class="card-sub">Caps REST API 통제 범위</span></div>
               <div id="vendor-coverage" class="vendor-coverage"></div>
             </div>
           </div>

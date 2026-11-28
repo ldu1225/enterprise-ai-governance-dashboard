@@ -49,7 +49,7 @@
     'POST /api/projects/inference-logging/enable': '추론 로그 활성화',
   };
   const PAGE_META = {
-    overview: ['Google Gemini · Caps REST API', '거버넌스 개요', 'Google Gemini 사용량 · 비용 · 통제 현황을 기존 OpenAI · Anthropic 거버넌스와 한 화면에서'],
+    overview: ['Google Gemini · Caps REST API', '거버넌스 개요', 'Google Gemini 사용량 · 비용 · 통제 현황을 한 화면에서'],
     users: ['사용자 거버넌스', '사용자 & 차단', '사용자별 사용량 추적, 예산 한도, IAM Deny 기반 즉시 차단 · 해제'],
     costs: ['FinOps', '비용 탐색기', '공식 Cloud Billing Catalog SKU 단가 × 로그 토큰 수 기반 사용자 · 모델별 추정 비용'],
     models: ['모델 통제', '모델 거버넌스', 'Org Policy 모델 접근 제어와 모델별 예산 규칙 — 모든 변경은 Dry-run 영향 미리보기 후 적용'],
@@ -401,7 +401,7 @@
     $('proj-hub').textContent = `Hub · ${state.hub}`;
     $('proj-spoke').dataset.project = state.spokes[0] || '';
     $('proj-spoke').textContent = `Spoke · ${state.spokes[0] || '—'}`;
-    $('auth-subtitle').textContent = `Hub(${state.hub}) · Spoke(${state.spokes.join(', ')}) — OpenAI · Anthropic · Google Gemini 통합 거버넌스`;
+    $('auth-subtitle').textContent = `Hub(${state.hub}) · Spoke(${state.spokes.join(', ')}) — Google Cloud AI 통합 거버넌스`;
   }
   async function checkAuthStatus() {
     const alertBox = $('auth-alert');
@@ -760,27 +760,27 @@
   function renderVendorCoverage() {
     const box = clear($('vendor-coverage'));
     const s = (state.overview && state.overview.summary) || {};
-    const legacy = (id, mono, monoCls, name, desc) => el('div', { className: 'vc-row legacy', id }, [
-      el('span', { className: `vmono ${monoCls}`, text: mono, 'aria-hidden': 'true' }),
+    const svc = (id, mono, name, desc) => el('div', { className: 'vc-row legacy', id }, [
+      el('span', { className: 'vmono v-google', text: mono, 'aria-hidden': 'true' }),
       el('div', {}, [el('div', { className: 'vc-name', text: name }), el('div', { className: 'vc-desc', text: desc })]),
-      el('span', { className: 'vc-state', text: '기존 연동 (별도 시스템)' }),
+      el('span', { className: 'vc-state', text: '차단 · 예산 · 모델' }),
     ]);
     box.append(
-      legacy('vc-openai', 'O', 'v-openai', 'OpenAI', '사내 기존 거버넌스 모듈에서 관리 · 이 화면 수치에 미포함'),
-      legacy('vc-anthropic', 'A', 'v-anthropic', 'Anthropic', '직접 계약분은 기존 모듈에서 관리 · Gemini Platform 경유 Claude는 Google 데이터에 포함'),
       el('div', { className: 'vc-row new', id: 'vc-google' }, [
         el('span', { className: 'vmono v-google', text: 'G', 'aria-hidden': 'true' }),
         el('div', {}, [
-          el('div', { className: 'vc-name', text: 'Google Gemini' }),
-          el('div', { className: 'vc-desc', text: 'gcp-ai-usage-caps-api REST 연동 · 사용량 · 비용 · 차단 · 모델 통제' }),
+          el('div', { className: 'vc-name', text: 'Gemini Platform' }),
+          el('div', { className: 'vc-desc', text: 'Gemini API · Model Garden — 추론 로그 기반 사용량 · 비용 · 차단 · 모델 통제' }),
           el('div', { className: 'vc-metrics' }, [
             el('span', {}, ['비용', el('b', { text: fmtUSD(s.total_estimated_cost) })]),
             el('span', {}, ['사용자', el('b', { text: fmtInt(s.active_users) })]),
             el('span', {}, ['요청', el('b', { text: fmtInt(s.total_requests) })]),
           ]),
         ]),
-        el('span', { className: 'vc-state', text: 'Caps API 신규 연동' }),
+        el('span', { className: 'vc-state', text: 'Caps REST API' }),
       ]),
+      svc('vc-antigravity', 'A', 'Antigravity', '에이전트 개발 환경 — 사용자 · 프로젝트 단위 IAM Deny 차단'),
+      svc('vc-gemini-enterprise', 'E', 'Gemini Enterprise', '업무용 Gemini 앱 — 사용자 · 프로젝트 단위 IAM Deny 차단'),
     );
   }
   function renderTopModels() {

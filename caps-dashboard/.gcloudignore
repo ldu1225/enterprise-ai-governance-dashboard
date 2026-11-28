@@ -1,0 +1,12 @@
+# Only the files the Dockerfile copies are uploaded to Cloud Build. Local secrets never leave the machine.
+.env
+.env.*
+.local_admin_hash
+.session_secret
+__pycache__/
+*.pyc
+tests/
+deploy.sh
+*.md
+.gcloudignore
+.gitignore
