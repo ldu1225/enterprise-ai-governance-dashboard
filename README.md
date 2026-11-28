@@ -91,6 +91,8 @@ bash <(curl -fsSL https://github.com/ldu1225/ai-control-plane/raw/main/scripts/i
 
 [영상 재생 (허브 API 탭)](https://ai-control-plane-hub-484712896449.us-central1.run.app/api/#featured-film-title) &nbsp;·&nbsp; [MP4 내려받기 (72 MB)](https://ai-control-plane-hub-484712896449.us-central1.run.app/media/video/gemini-governance-rest-api-demo.e54ca613f3.mp4) &nbsp;·&nbsp; [고객사 콘솔 열기 (Cloud Run)](https://caps-dashboard-484712896449.asia-northeast3.run.app)
 
+공개 소개 사이트: [gemini-governance-showcase-484712896449.us-central1.run.app](https://gemini-governance-showcase-484712896449.us-central1.run.app) (홈 · AI Control Plane · Caps API · 영상 2편만 담은 외부 공유용 페이지입니다. 덱 · 데모 · 설계 문서 · 디스커버리는 내부 허브에만 있습니다.)
+
 ---
 
 ## 화면

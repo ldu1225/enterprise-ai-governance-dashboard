@@ -91,6 +91,8 @@ Shot on a live environment: the [`caps-dashboard`](caps-dashboard/) customer gov
 
 [Play (hub API tab)](https://ai-control-plane-hub-484712896449.us-central1.run.app/api/#featured-film-title) &nbsp;·&nbsp; [Download MP4 (72 MB)](https://ai-control-plane-hub-484712896449.us-central1.run.app/media/video/gemini-governance-rest-api-demo.e54ca613f3.mp4) &nbsp;·&nbsp; [Open the customer console (Cloud Run)](https://caps-dashboard-484712896449.asia-northeast3.run.app)
 
+Public showcase: [gemini-governance-showcase-484712896449.us-central1.run.app](https://gemini-governance-showcase-484712896449.us-central1.run.app) (home, AI Control Plane, Caps API and both films only, for sharing outside the team; decks, demo, design and discovery documents stay on the internal hub.)
+
 ---
 
 ## Screens
