@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.env
+.env.*
+.local_admin_hash
+.session_secret
+.pytest_cache/
