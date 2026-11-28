@@ -85,11 +85,11 @@ bash <(curl -fsSL https://github.com/ldu1225/ai-control-plane/raw/main/scripts/i
 
 ## 데모 영상: 순수 REST API로 고객사 콘솔에 Gemini 거버넌스 붙이기
 
-[![Gemini 거버넌스 REST API 실환경 데모 영상 (8분 54초)](docs/assets/video/gov-demo-poster.jpg)](https://ai-control-plane-hub-484712896449.us-central1.run.app/api/#featured-film-title)
+[![Gemini 거버넌스 REST API 실환경 데모 영상 (6분 51초)](docs/assets/video/gov-demo-poster.jpg)](https://ai-control-plane-hub-484712896449.us-central1.run.app/api/#featured-film-title)
 
 [`caps-dashboard`](caps-dashboard/)(고객사 거버넌스 콘솔)가 Caps REST API만으로 허브·스포크 프로젝트의 Gemini 사용량을 추적하고, 테스트 사용자의 실제 Gemini 호출을 IAM Deny로 403 차단했다가 복구하는 과정을 실환경 그대로 촬영했습니다. 아키텍처, API 명세서 6개 영역, 콘솔 투어, 즉시 차단·예산 초과·모델 위반·조직 정책 영향도 미리보기, 비용과 감사 로그 순서입니다. 한국어 내레이션과 자막이 들어 있습니다.
 
-[영상 재생 (허브 API 탭)](https://ai-control-plane-hub-484712896449.us-central1.run.app/api/#featured-film-title) &nbsp;·&nbsp; [MP4 내려받기 (131 MB)](https://ai-control-plane-hub-484712896449.us-central1.run.app/media/video/gemini-governance-rest-api-demo.f6da34e25f.mp4) &nbsp;·&nbsp; [고객사 콘솔 열기 (Cloud Run)](https://caps-dashboard-484712896449.asia-northeast3.run.app)
+[영상 재생 (허브 API 탭)](https://ai-control-plane-hub-484712896449.us-central1.run.app/api/#featured-film-title) &nbsp;·&nbsp; [MP4 내려받기 (72 MB)](https://ai-control-plane-hub-484712896449.us-central1.run.app/media/video/gemini-governance-rest-api-demo.cddfca756c.mp4) &nbsp;·&nbsp; [고객사 콘솔 열기 (Cloud Run)](https://caps-dashboard-484712896449.asia-northeast3.run.app)
 
 ---
 

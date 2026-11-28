@@ -85,11 +85,11 @@ Shared: project switcher (all or one), light and dark themes, Korean and English
 
 ## Demo film: Gemini governance in a customer console through the REST API alone
 
-[![Gemini governance REST API live demo (8:54)](docs/assets/video/gov-demo-poster.jpg)](https://ai-control-plane-hub-484712896449.us-central1.run.app/api/#featured-film-title)
+[![Gemini governance REST API live demo (6:51)](docs/assets/video/gov-demo-poster.jpg)](https://ai-control-plane-hub-484712896449.us-central1.run.app/api/#featured-film-title)
 
 Shot on a live environment: the [`caps-dashboard`](caps-dashboard/) customer governance console tracks Gemini usage across hub and spoke projects using only the Caps REST API, then blocks a test user's real Gemini calls with IAM Deny (HTTP 403) and restores them. It covers the architecture, the six areas of the API spec, a console tour, instant block, budget overrun, model violation, Org Policy impact preview, and cost and audit logs. Korean narration with subtitles.
 
-[Play (hub API tab)](https://ai-control-plane-hub-484712896449.us-central1.run.app/api/#featured-film-title) &nbsp;·&nbsp; [Download MP4 (131 MB)](https://ai-control-plane-hub-484712896449.us-central1.run.app/media/video/gemini-governance-rest-api-demo.f6da34e25f.mp4) &nbsp;·&nbsp; [Open the customer console (Cloud Run)](https://caps-dashboard-484712896449.asia-northeast3.run.app)
+[Play (hub API tab)](https://ai-control-plane-hub-484712896449.us-central1.run.app/api/#featured-film-title) &nbsp;·&nbsp; [Download MP4 (72 MB)](https://ai-control-plane-hub-484712896449.us-central1.run.app/media/video/gemini-governance-rest-api-demo.cddfca756c.mp4) &nbsp;·&nbsp; [Open the customer console (Cloud Run)](https://caps-dashboard-484712896449.asia-northeast3.run.app)
 
 ---
 

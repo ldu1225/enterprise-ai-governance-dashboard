@@ -4,14 +4,14 @@
 
 외부 Python/JS 패키지 의존성 없이 Python 3.12 표준 라이브러리와 모던 HTML/CSS/Vanilla JS만으로 동작합니다.
 
-## 데모 영상 (실환경 · 8분 54초)
+## 데모 영상 (실환경 · 6분 51초)
 
 [![Gemini 거버넌스 REST API 실환경 데모 영상](../docs/assets/video/gov-demo-poster.jpg)](https://ai-control-plane-hub-484712896449.us-central1.run.app/api/#featured-film-title)
 
 아키텍처 → Caps API 명세서(사용량·비용, 한도·차단, 그룹, 모델 통제, 쿼터, 보안) → 이 콘솔 투어 → 즉시 차단 · 예산 초과 자동 차단 · 모델 위반 · 조직 정책 영향도 미리보기 · 비용과 감사 로그. 테스트 사용자의 실제 Gemini 호출이 IAM Deny로 403 차단되고 다시 풀리는 과정을 그대로 담았습니다. 한국어 내레이션과 자막이 포함되어 있습니다.
 
 - 영상 재생: [엔게이지먼트 허브 · API 탭](https://ai-control-plane-hub-484712896449.us-central1.run.app/api/#featured-film-title)
-- MP4 직접 받기: [gemini-governance-rest-api-demo.mp4](https://ai-control-plane-hub-484712896449.us-central1.run.app/media/video/gemini-governance-rest-api-demo.f6da34e25f.mp4) (131 MB, GitHub 100 MB 파일 제한 때문에 저장소 대신 허브에서 제공합니다.)
+- MP4 직접 받기: [gemini-governance-rest-api-demo.mp4](https://ai-control-plane-hub-484712896449.us-central1.run.app/media/video/gemini-governance-rest-api-demo.cddfca756c.mp4) (72 MB, GitHub 100 MB 파일 제한 때문에 저장소 대신 허브에서 제공합니다.)
 
 ## 접속 URL
 
