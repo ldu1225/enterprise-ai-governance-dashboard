@@ -81,6 +81,14 @@ per-project `#cap-project-cost-<projectId>`, `#cap-note-input`, **submit `#cap-s
 `#cost-summary`, `#cost-view-users`, `#cost-view-models`, `#cost-search`,
 `#cost-users-table` / `#cost-models-table` (click a `th[data-sort]` to sort). The date range and the Hub/Spoke filter use the global filters.
 
+## Usage ledger tab (Caps API v1.4.0)
+Nav `#tab-ledger`, panel `#panel-ledger`. KPIs `#ledger-summary` (`#ledger-kpi-facts|req|tok|cost|fresh`).
+Grain `#ledger-gran-hour` / `#ledger-gran-day`, surface `#ledger-surface-<all|gemini_platform|antigravity|gemini_enterprise>`,
+group_by chips `#ledger-dim-<user|surface|project|model|location|client|app|agent|traffic|reasoning_level>` (`aria-pressed`).
+Chart `#ledger-chart-svg`, modality bars `#ledger-modality`, breakdown `#ledger-breakdown` with `#ledger-bd-<location|client|agent|app>`,
+SKU lines `#ledger-sku-table` / `#ledger-sku-tbody`, facts `#ledger-facts-table` (rows `#ledger-fact-<fact_id>`),
+exports `#ledger-exports` (rows `#ledger-export-<id>`, download link `a[href^="/api/ledger/export"]`, toggle `#ledger-exports-more`).
+
 ## Audit tab
 `#violations-table`, `#viol-search`, `#viol-type-filter`, **`#audit-table`**, `#audit-tbody`,
 `#audit-search`, `#audit-action-filter`, `#audit-hide-scheduler` (checked by default and hides scheduler

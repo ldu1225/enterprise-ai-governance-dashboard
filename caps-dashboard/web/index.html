@@ -89,6 +89,11 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h2v16h16v2H3zm4 10 4-4 3 3 5-6 1.5 1.3L14 15l-3-3-2.6 2.6z"/></svg>
           <span>비용 탐색기</span>
         </button>
+        <button id="tab-ledger" class="nav-item" role="tab" aria-selected="false" aria-controls="panel-ledger" data-tab="ledger">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v4H4zm0 6h16v4H4zm0 6h10v4H4zm12 0h4v4h-4z"/></svg>
+          <span>사용량 원장</span>
+          <span class="nav-badge new-badge">NEW</span>
+        </button>
         <p class="nav-group">통제</p>
         <button id="tab-models" class="nav-item" role="tab" aria-selected="false" aria-controls="panel-models" data-tab="models">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7zm0 2.3L18.7 8 12 11.7 5.3 8zM5 9.7l6 3.3v6.6l-6-3.3zm8 9.9V13l6-3.3v6.6z"/></svg>
@@ -467,6 +472,71 @@
         </section>
 
         <!-- ============================ AUDIT =============================== -->
+        <!-- ============================ LEDGER (v1.4.0) ===================== -->
+        <section id="panel-ledger" class="panel" role="tabpanel" aria-labelledby="tab-ledger" hidden>
+          <div id="ledger-summary" class="kpi-grid kpi-grid-5"></div>
+          <div class="toolbar ledger-toolbar">
+            <div class="seg" role="group" aria-label="버킷 단위" id="ledger-gran">
+              <button id="ledger-gran-hour" class="seg-btn active" type="button" data-gran="hour">시간</button>
+              <button id="ledger-gran-day" class="seg-btn" type="button" data-gran="day">일</button>
+            </div>
+            <div class="seg" role="group" aria-label="서비스" id="ledger-surface">
+              <button id="ledger-surface-all" class="seg-btn active" type="button" data-surface="all">전체</button>
+              <button id="ledger-surface-gemini_platform" class="seg-btn" type="button" data-surface="gemini_platform">Gemini Platform</button>
+              <button id="ledger-surface-antigravity" class="seg-btn" type="button" data-surface="antigravity">Antigravity</button>
+              <button id="ledger-surface-gemini_enterprise" class="seg-btn" type="button" data-surface="gemini_enterprise">Gemini Enterprise</button>
+            </div>
+            <div class="ledger-dims" id="ledger-dims" role="group" aria-label="group_by 차원"></div>
+            <span class="toolbar-spacer"></span>
+            <span id="ledger-fresh-note" class="muted small"></span>
+          </div>
+          <div class="grid grid-2-1">
+            <div class="card glass">
+              <div class="card-head"><h3 id="ledger-chart-title">시간대별 사용량 · 정가 비용</h3><span class="card-sub">GET /v1/usage/facts · UTC 버킷</span></div>
+              <div id="ledger-chart" class="ledger-chart"></div>
+            </div>
+            <div class="card glass">
+              <div class="card-head"><h3>모달리티별 토큰</h3><span class="card-sub">usageMetadata *TokensDetails</span></div>
+              <div id="ledger-modality" class="hbar-list"></div>
+            </div>
+          </div>
+          <div class="grid grid-2">
+            <div class="card glass">
+              <div class="card-head"><h3>차원별 분해</h3>
+                <div class="seg seg-sm" role="group" aria-label="분해 차원" id="ledger-bd-dim">
+                  <button id="ledger-bd-location" class="seg-btn active" type="button" data-dim="location">리전</button>
+                  <button id="ledger-bd-client" class="seg-btn" type="button" data-dim="client">클라이언트</button>
+                  <button id="ledger-bd-agent" class="seg-btn" type="button" data-dim="agent">에이전트</button>
+                  <button id="ledger-bd-app" class="seg-btn" type="button" data-dim="app">앱</button>
+                </div>
+              </div>
+              <div id="ledger-breakdown" class="hbar-list"></div>
+            </div>
+            <div class="card glass">
+              <div class="card-head"><h3>SKU별 정가 비용 라인</h3><span class="card-sub" id="ledger-sku-sub">billing[] 합계 = list_cost</span></div>
+              <div class="table-scroll">
+                <table id="ledger-sku-table" class="table">
+                  <thead><tr><th scope="col">모델</th><th scope="col">구성요소</th><th scope="col">SKU</th><th scope="col" class="num">수량(토큰)</th><th scope="col" class="num">$/1M</th><th scope="col" class="num">비용</th></tr></thead>
+                  <tbody id="ledger-sku-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="card glass table-card">
+            <div class="card-head"><h3>Fact 행</h3><span class="card-sub" id="ledger-facts-sub">fact_id로 upsert · revision이 바뀌면 재집계된 값</span></div>
+            <div class="table-scroll">
+              <table id="ledger-facts-table" class="table">
+                <thead><tr id="ledger-facts-head"></tr></thead>
+                <tbody id="ledger-facts-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card glass">
+            <div class="card-head"><h3>일별 JSONL 내보내기</h3><span class="card-sub">GET /v1/usage/exports → /download · 한 줄 = 시간 단위 fact</span></div>
+            <div id="ledger-exports" class="ledger-exports"></div>
+          </div>
+        </section>
+
         <section id="panel-audit" class="panel" role="tabpanel" aria-labelledby="tab-audit" hidden>
           <div class="card glass table-card">
             <div class="card-head">

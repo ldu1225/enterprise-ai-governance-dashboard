@@ -85,6 +85,34 @@ def start_fake_upstream(expected_api_key: str) -> tuple[http.server.ThreadingHTT
                 self._json(200, {"status": "ok", "version": "1.3.0", "enforcement": {"mode": "auto", "backend": "iam_deny"}})
             elif path == "/v1/caps/policy":
                 self._json(200, state.policy)
+            elif path == "/v1/usage/facts":
+                qs = urllib.parse.parse_qs(parsed.query)
+                state.calls.append(("FACTS", qs.get("granularity", [""])[0], {"group_by": qs.get("group_by", [""])[0]}))
+                self._json(200, {
+                    "object": "list", "has_more": False, "total": 1,
+                    "data": [{"object": "usage_fact", "fact_id": "f" * 32, "revision": "r1", "bucket_start": "2026-11-27T03:00:00Z",
+                              "granularity": qs.get("granularity", ["day"])[0], "email": "alice@example.com", "surface": "gemini_platform",
+                              "model": "gemini-2.5-flash", "location": "global", "requests": 4, "total_tokens": 5099, "list_cost": 0.0051505,
+                              "by_modality": {"audio": {"input_tokens": 100, "output_tokens": 0}, "image": {"input_tokens": 1290, "output_tokens": 0}},
+                              "billing": [{"model": "gemini-2.5-flash", "component": "audio_input", "sku_id": "8164-1351-B2C2",
+                                           "quantity": {"value": 100, "unit": "tokens"}, "unit_price_per_1m": 1.0, "cost": 0.0001}]}],
+                    "summary": {"facts": 1, "total_requests": 4, "total_tokens": 5099, "total_list_cost": 0.0051505},
+                    "data_refreshed_at": "2026-11-28T04:00:00Z", "data_complete_through": "2026-11-28T03:00:00Z",
+                    "telemetry": {"cache_hit": False, "attribution": {"header_label": 4}},
+                })
+            elif path == "/v1/usage/exports":
+                self._json(200, {"object": "list", "has_more": False, "data": [
+                    {"object": "usage_export", "id": "usage-facts-hourly-2026-11-27", "period_start": "2026-11-27T00:00:00Z",
+                     "period_end": "2026-11-28T00:00:00Z", "granularity": "hour", "group_by": ["user"], "format": "jsonl",
+                     "status": "complete", "download_path": "/v1/usage/exports/usage-facts-hourly-2026-11-27/download"}]})
+            elif path == "/v1/usage/exports/usage-facts-hourly-2026-11-27/download":
+                raw = b'{"fact_id":"a"}\n{"fact_id":"b"}\n'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("X-Usage-Export-Revision", "abc123")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
             elif path == "/v1/usage/users":
                 self._json(200, {
                     "object": "list",
@@ -723,6 +751,32 @@ class DashboardTestCase(unittest.TestCase):
 
         st, _, _, _ = self._req("GET", "/api/audit?action=user.blocked&limit=50", cookies=cookies)
         self.assertEqual(st, 200)
+
+    def test_usage_ledger_facts_breakdown_and_jsonl_export(self) -> None:
+        cookies, _ = self._setup_and_login()
+        st, _, _, raw = self._req("GET", "/api/ledger?start=2026-11-20&end=2026-11-27&granularity=hour&group_by=user,model,location"
+                                  "&surface=gemini_platform", cookies=cookies)
+        self.assertEqual(st, 200)
+        data = json.loads(raw)
+        self.assertEqual(data["facts"][0]["by_modality"]["audio"]["input_tokens"], 100)
+        self.assertEqual(data["facts"][0]["billing"][0]["component"], "audio_input")
+        self.assertEqual(data["range"]["group_by"], ["user", "model", "location"])
+        self.assertEqual(data["exports"][0]["id"], "usage-facts-hourly-2026-11-27")
+        self.assertEqual(data["data_complete_through"], "2026-11-28T03:00:00Z")
+        facts_calls = [c for c in self.upstream_state.calls if c[0] == "FACTS"]
+        self.assertIn(("FACTS", "hour", {"group_by": "user,model,location"}), facts_calls)
+        self.assertTrue(any(c[1] == "day" for c in facts_calls))   # dimension breakdown query
+        # validation: hourly window > 31 days, unknown dimension, bad surface, bad export id
+        for bad in ("start=2026-09-01&end=2026-11-27&granularity=hour", "group_by=user,colour", "surface=other"):
+            st, _, _, _ = self._req("GET", "/api/ledger?" + bad, cookies=cookies)
+            self.assertEqual(st, 400, bad)
+        st, headers, _, raw = self._req("GET", "/api/ledger/export?id=usage-facts-hourly-2026-11-27", cookies=cookies)
+        self.assertEqual(st, 200)
+        self.assertEqual(raw.count(b"\n"), 2)
+        st, _, _, _ = self._req("GET", "/api/ledger/export?id=..%2F..%2Fetc", cookies=cookies)
+        self.assertEqual(st, 400)
+        st, _, _, _ = self._req("GET", "/api/ledger")   # no session
+        self.assertEqual(st, 401)
 
 
 if __name__ == "__main__":

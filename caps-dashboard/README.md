@@ -1,6 +1,6 @@
 # Hub-and-Spoke GCP AI Usage & Model Budget Dashboard
 
-[`gcp-ai-usage-caps-api`](https://github.com/ldu1225/gcp-ai-usage-caps-api/tree/main) (`v1.3.0`)를 백엔드로 사용하여 **허브(`duleetest`)** 와 **스포크(`dulee-ai-test`)** 프로젝트의 Google Cloud AI(**Gemini Platform**, **Antigravity**, **Gemini Enterprise**) 사용량을 **유저별·모델별로 트래킹**하고, **예산 상한 초과 시 IAM Deny v2로 자동/수동 차단**하는 경량 BFF 대시보드입니다.
+[`gcp-ai-usage-caps-api`](https://github.com/ldu1225/gcp-ai-usage-caps-api/tree/main) (`v1.4.0`)를 백엔드로 사용하여 **허브(`duleetest`)** 와 **스포크(`dulee-ai-test`)** 프로젝트의 Google Cloud AI(**Gemini Platform**, **Antigravity**, **Gemini Enterprise**) 사용량을 **유저별·모델별로 트래킹**하고, **예산 상한 초과 시 IAM Deny v2로 자동/수동 차단**하는 경량 BFF 대시보드입니다.
 
 외부 Python/JS 패키지 의존성 없이 Python 3.12 표준 라이브러리와 모던 HTML/CSS/Vanilla JS만으로 동작합니다.
 
@@ -38,7 +38,12 @@
    - 전역 지출 캡 정책(`PUT /v1/caps/policy`) 및 Hub/Spoke별 기본 상한(`project_defaults`)
    - 안전 게이트 G1–G7 포함 지출 캡 집행(`POST /v1/caps/enforce`)
    - `duleetest`(Hub) / `dulee-ai-test`(Spoke)별 월간 프로젝트 하드캡 및 Gemini Platform 추론 요청 로그 상태 조회·활성화
-4. **위반 & 감사 로그**
+4. **사용량 원장 (Caps API v1.4.0)**
+   - `GET /v1/usage/facts` 기반: UTC 시간·일 버킷 × 원하는 차원(사용자·서비스·프로젝트·모델·리전·클라이언트·앱·에이전트·트래픽·추론 수준) 칩 선택
+   - 버킷별 요청·정가 비용 차트, 모달리티별 토큰(텍스트·이미지·오디오·영상·문서), 리전·클라이언트·에이전트·앱 분해
+   - SKU별 정가 비용 라인(`billing[]`, 오디오·이미지 토큰은 해당 모달리티 SKU), `fact_id`·`revision`이 보이는 Fact 행
+   - `GET /v1/usage/exports` 일별 JSONL 목록과 다운로드(BFF `/api/ledger/export` 프록시), `data_refreshed_at`·`data_complete_through` 표시
+5. **위반 & 감사 로그**
    - 모델 예산/정책 위반 이벤트(`GET /v1/model-violations`) 및 거버넌스 감사 로그(`GET /v1/audit-logs`)
 
 ## 로컬 실행 방법 (고객사 포털 입장 · 100% REST API 전용)

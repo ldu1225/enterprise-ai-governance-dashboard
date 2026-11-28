@@ -55,6 +55,7 @@
     models: ['모델 통제', '모델 거버넌스', 'Org Policy 모델 접근 제어와 모델별 예산 규칙 — 모든 변경은 Dry-run 영향 미리보기 후 적용'],
     policies: ['정책 · 안전장치', '정책 & 안전 게이트', '전역 지출 한도, 프로젝트 하드캡, IAM Deny 집행 전 안전 게이트 G1–G7'],
     audit: ['컴플라이언스', '감사 & 위반', '모델 규칙 위반 이벤트와 모든 거버넌스 변경의 감사 로그'],
+    ledger: ['Caps API v1.4.0 · 원장형 수집', '사용량 원장', 'UTC 시간·일 버킷 × 차원(사용자 · 모델 · 리전 · 클라이언트 · 앱 · 에이전트) — 모달리티별 토큰, SKU별 정가 비용, 일별 JSONL'],
   };
 
   const state = {
@@ -80,6 +81,8 @@
     costView: 'users',
     costSearch: '',
     costSort: { users: { key: 'estimated_cost', dir: 'desc' }, models: { key: 'estimated_cost', dir: 'desc' } },
+    ledgerData: null,
+    ledger: { gran: 'hour', surface: 'all', dims: ['user', 'surface', 'model'], bd: 'location' },
     trace: { seq: 0, calls: [], open: false, expanded: new Set(), host: '', inflight: 0, live: null, pulling: false, again: false },
     drawerEmail: null,
     drawerData: null,
@@ -525,7 +528,7 @@
     $('page-eyebrow').textContent = eyebrow;
     $('page-title').textContent = title;
     $('page-subtitle').textContent = sub;
-    $('filter-bar').hidden = !['overview', 'users', 'costs', 'models'].includes(tab);
+    $('filter-bar').hidden = !['overview', 'users', 'costs', 'models', 'ledger'].includes(tab);
     loadTab(tab, force);
   }
   async function loadTab(tab, force = false) {
@@ -546,6 +549,10 @@
       } else if (tab === 'audit') {
         await ensureAudit(force);
         renderAudit();
+      } else if (tab === 'ledger') {
+        renderLedger();
+        await ensureLedger(force);
+        renderLedger();
       }
     } catch (err) {
       toast(err.message, 'error');
@@ -1662,6 +1669,204 @@
     ]);
   }
 
+
+  // ---------------------------------------------------------------------------
+  // Usage ledger (Caps API v1.4.0: /v1/usage/facts · /v1/usage/exports)
+  // ---------------------------------------------------------------------------
+  const LEDGER_DIMS = [['user', '사용자'], ['surface', '서비스'], ['project', '프로젝트'], ['model', '모델'], ['location', '리전'],
+    ['client', '클라이언트'], ['app', '앱'], ['agent', '에이전트'], ['traffic', '트래픽'], ['reasoning_level', '추론 수준']];
+  const MODALITY_LABEL = { text: '텍스트', image: '이미지', audio: '오디오', video: '영상', document: '문서' };
+  const COMPONENT_LABEL = { input: '텍스트 입력', cached_input: '캐시 입력', cache_write: '캐시 쓰기', output: '출력', audio_input: '오디오 입력',
+    image_input: '이미지 입력', video_input: '영상 입력', audio_output: '오디오 출력', image_output: '이미지 출력' };
+  const ledgerKey = () => `${filterKey()}|${state.ledger.gran}|${state.ledger.surface}|${state.ledger.dims.join(',')}`;
+  async function ensureLedger(force) {
+    const key = ledgerKey();
+    if (!force && state.ledgerData && state.loaded.ledger === key) return;
+    const data = await apiGet('/api/ledger', {
+      start: state.start, end: state.end, project: state.project, fresh: state.fresh ? 'true' : 'false',
+      granularity: state.ledger.gran, surface: state.ledger.surface, group_by: state.ledger.dims.join(','),
+    });
+    state.ledgerData = data;
+    state.loaded.ledger = key;
+    showPartialErrors(data);
+  }
+  function renderLedgerDims() {
+    const box = clear($('ledger-dims'));
+    for (const [id, label] of LEDGER_DIMS) {
+      const on = state.ledger.dims.includes(id);
+      box.appendChild(el('button', {
+        id: `ledger-dim-${id}`, type: 'button', className: `dim-chip${on ? ' on' : ''}`, 'aria-pressed': on ? 'true' : 'false',
+        text: label, title: `group_by=${id}`,
+        onClick: () => {
+          const dims = state.ledger.dims.includes(id) ? state.ledger.dims.filter((d) => d !== id) : [...state.ledger.dims, id];
+          if (!dims.length) return;
+          state.ledger.dims = LEDGER_DIMS.map(([d]) => d).filter((d) => dims.includes(d));
+          loadTab('ledger');
+        },
+      }));
+    }
+  }
+  function ledgerChart(facts, gran) {
+    const byBucket = new Map();
+    for (const f of facts) {
+      const b = byBucket.get(f.bucket_start) || { bucket: f.bucket_start, requests: 0, total_tokens: 0, cost: 0 };
+      b.requests += num(f.requests); b.total_tokens += num(f.total_tokens); b.cost += num(f.list_cost);
+      byBucket.set(f.bucket_start, b);
+    }
+    let ts = [...byBucket.values()].sort((a, b) => a.bucket.localeCompare(b.bucket));
+    if (ts.length > 1) {   // continuous axis: empty buckets are real zeroes
+      const step = gran === 'hour' ? 3600e3 : 86400e3;
+      const filled = [];
+      for (let t = Date.parse(ts[0].bucket); t <= Date.parse(ts[ts.length - 1].bucket); t += step) {
+        const iso = new Date(t).toISOString().replace('.000Z', 'Z');
+        filled.push(byBucket.get(iso) || { bucket: iso, requests: 0, total_tokens: 0, cost: 0 });
+      }
+      if (filled.length <= 2000) ts = filled;
+    }
+    const W = 860; const H = 220; const pad = { l: 46, r: 46, t: 14, b: 26 };
+    const node = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', id: 'ledger-chart-svg', preserveAspectRatio: 'none', role: 'img', 'aria-label': '버킷별 요청 수와 정가 비용' }, [
+      svg('defs', {}, [svg('linearGradient', { id: 'ledgerBarGrad', x1: '0', y1: '0', x2: '0', y2: '1' }, [
+        svg('stop', { offset: '0', 'stop-color': '#8b5cf6' }), svg('stop', { offset: '1', 'stop-color': '#4f8cff', 'stop-opacity': '0.55' }),
+      ])]),
+    ]);
+    if (!ts.length) { node.appendChild(svg('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', class: 'c-axis', text: '이 기간 데이터가 없습니다' })); return node; }
+    const maxReq = Math.max(1, ...ts.map((p) => p.requests));
+    const maxCost = Math.max(0.000001, ...ts.map((p) => p.cost));
+    const iw = W - pad.l - pad.r; const ih = H - pad.t - pad.b;
+    for (let g = 0; g <= 4; g += 1) {
+      const y = pad.t + (ih * g) / 4;
+      node.appendChild(svg('line', { x1: pad.l, x2: W - pad.r, y1: y, y2: y, class: 'c-grid' }));
+      node.appendChild(svg('text', { x: pad.l - 6, y: y + 3, 'text-anchor': 'end', class: 'c-axis', text: fmtCompact(maxReq * (1 - g / 4)) }));
+      node.appendChild(svg('text', { x: W - pad.r + 6, y: y + 3, 'text-anchor': 'start', class: 'c-axis', text: `$${(maxCost * (1 - g / 4)).toFixed(maxCost < 1 ? 3 : 2)}` }));
+    }
+    const bw = iw / ts.length; const pts = [];
+    const label = (iso) => (gran === 'hour' ? `${iso.slice(5, 10)} ${iso.slice(11, 13)}시` : iso.slice(5, 10));
+    ts.forEach((p, i) => {
+      const x = pad.l + i * bw; const h = (p.requests / maxReq) * ih;
+      const rect = svg('rect', { x: x + bw * 0.15, y: pad.t + ih - h, width: Math.max(1, bw * 0.7), height: Math.max(0, h), rx: 2, class: 'c-bar ledger-bar' },
+        [svg('title', { text: `${label(p.bucket)} UTC · 요청 ${fmtInt(p.requests)} · 토큰 ${fmtInt(p.total_tokens)} · ${fmtUSD(p.cost)}` })]);
+      rect.style.animationDelay = `${Math.min(i, 60) * 10}ms`;
+      node.appendChild(rect);
+      pts.push(`${(x + bw / 2).toFixed(1)},${(pad.t + ih - (p.cost / maxCost) * ih).toFixed(1)}`);
+      if (ts.length <= 12 || i % Math.ceil(ts.length / 10) === 0 || i === ts.length - 1) node.appendChild(svg('text', { x: x + bw / 2, y: H - 7, 'text-anchor': 'middle', class: 'c-axis', text: label(p.bucket) }));
+    });
+    node.appendChild(svg('polyline', { points: pts.join(' '), class: 'c-line' }));
+    return node;
+  }
+  function hbarRows(box, rows, valueFmt, subFn, cls = '') {
+    clear(box);
+    if (!rows.length) { box.appendChild(el('p', { className: 'muted', text: '이 기간에 해당 값이 기록된 로그가 없습니다.' })); return; }
+    const max = Math.max(...rows.map((r) => r.value), 0.000001);
+    rows.forEach((r) => box.appendChild(el('div', { className: 'hbar' }, [
+      el('div', { className: 'hbar-name' }, [el('b', { text: r.name, title: r.name }), el('small', { text: subFn(r) })]),
+      bar((r.value / max) * 100, cls),
+      el('div', { className: 'hbar-val', text: valueFmt(r.value) }),
+    ])));
+  }
+  function renderLedger() {
+    const d = state.ledgerData;
+    renderLedgerDims();
+    for (const b of document.querySelectorAll('#ledger-gran .seg-btn')) b.classList.toggle('active', b.dataset.gran === state.ledger.gran);
+    for (const b of document.querySelectorAll('#ledger-surface .seg-btn')) b.classList.toggle('active', b.dataset.surface === state.ledger.surface);
+    for (const b of document.querySelectorAll('#ledger-bd-dim .seg-btn')) b.classList.toggle('active', b.dataset.dim === state.ledger.bd);
+    if (!d) return;
+    const facts = d.facts || [];
+    const s = d.summary || {};
+    const mod = {};
+    let audioImage = 0;
+    for (const f of facts) for (const [m, v] of Object.entries(f.by_modality || {})) {
+      const t = num(v.input_tokens) + num(v.output_tokens);
+      mod[m] = mod[m] || { input: 0, output: 0 }; mod[m].input += num(v.input_tokens); mod[m].output += num(v.output_tokens);
+      if (m !== 'text') audioImage += t;
+    }
+    const box = clear($('ledger-summary'));
+    box.append(
+      kpiCard({ id: 'ledger-kpi-facts', label: 'Fact 행', value: num(s.facts), formatter: fmtInt, sub: `${d.range.granularity === 'hour' ? '시간' : '일'} 버킷 · ${d.range.group_by.length}개 차원`, iconName: 'layers', tone: 'violet' }),
+      kpiCard({ id: 'ledger-kpi-req', label: '요청', value: num(s.total_requests), formatter: fmtInt, sub: `${d.range.start} ~ ${d.range.end} (UTC)`, iconName: 'bolt', tone: 'blue' }),
+      kpiCard({ id: 'ledger-kpi-tok', label: '토큰', value: num(s.total_tokens), formatter: fmtCompact, sub: `멀티모달 ${fmtCompact(audioImage)}`, iconName: 'cpu', tone: 'cyan' }),
+      kpiCard({ id: 'ledger-kpi-cost', label: '정가 비용 (list_cost)', value: num(s.total_list_cost), formatter: fmtUSD, sub: '공식 SKU 단가 × 로그 토큰', iconName: 'dollar', tone: 'green' }),
+      kpiCard({ id: 'ledger-kpi-fresh', label: '데이터 확정 시각', value: 0, formatter: () => (d.data_complete_through ? fmtDateTime(d.data_complete_through) : '—'), sub: `집계 ${fmtDateTime(d.data_refreshed_at, true)}`, iconName: 'clock', tone: 'amber' }),
+    );
+    const tel = d.telemetry || {};
+    $('ledger-fresh-note').textContent = `캐시 ${tel.cache_hit ? '적중' : '갱신'} · 귀속 ${Object.entries(tel.attribution || {}).map(([k, v]) => `${k} ${fmtInt(v)}`).join(' · ') || '—'}`;
+    $('ledger-chart-title').textContent = `${d.range.granularity === 'hour' ? '시간대별' : '일별'} 요청 수 · 정가 비용`;
+    clear($('ledger-chart')).appendChild(ledgerChart(facts, d.range.granularity));
+    const modRows = Object.entries(mod).map(([m, v]) => ({ name: MODALITY_LABEL[m] || m, value: v.input + v.output, ...v }))
+      .sort((a, b) => b.value - a.value);
+    hbarRows($('ledger-modality'), modRows, fmtCompact, (r) => `입력 ${fmtCompact(r.input)} · 출력 ${fmtCompact(r.output)}`, 'cyan');
+    const dim = state.ledger.bd;
+    const agg = new Map();
+    for (const f of d.breakdown || []) {
+      const k = f[dim];
+      if (!k) continue;
+      const a = agg.get(k) || { name: k, value: 0, tokens: 0, cost: 0, names: new Set(), surfaces: new Set() };
+      a.value += num(f.requests); a.tokens += num(f.total_tokens); a.cost += num(f.list_cost);
+      if (dim === 'agent') (f.agent_names || []).forEach((n) => a.names.add(n));
+      if (f.surface) a.surfaces.add(f.surface);
+      agg.set(k, a);
+    }
+    const bdRows = [...agg.values()].sort((a, b) => b.value - a.value).slice(0, 10)
+      .map((a) => ({ ...a, name: a.names.size ? `${[...a.names][0]} (${a.name})` : a.name }));
+    hbarRows($('ledger-breakdown'), bdRows, (v) => `${fmtInt(v)}건`, (r) => `${[...r.surfaces].map(surfaceLabel).join(', ')} · 토큰 ${fmtCompact(r.tokens)}${r.cost ? ` · ${fmtUSD(r.cost)}` : ''}`);
+    const lines = new Map();
+    for (const f of facts) for (const ln of f.billing || []) {
+      const k = `${ln.model}|${ln.component}|${ln.sku_id}|${ln.unit_price_per_1m}`;
+      const a = lines.get(k) || { model: ln.model, component: ln.component, sku: ln.sku_id, price: ln.unit_price_per_1m, qty: 0, cost: 0 };
+      a.qty += num(ln.quantity && ln.quantity.value); a.cost += num(ln.cost); lines.set(k, a);
+    }
+    const skuRows = [...lines.values()].sort((a, b) => b.cost - a.cost);
+    const tb = clear($('ledger-sku-tbody'));
+    if (!skuRows.length) tb.appendChild(el('tr', {}, [el('td', { colspan: '6', className: 'empty-cell', text: 'SKU 라인이 없습니다.' })]));
+    skuRows.slice(0, 40).forEach((r) => tb.appendChild(el('tr', {}, [
+      el('td', {}, [el('span', { className: 'mono', text: r.model })]),
+      el('td', {}, [el('span', { className: `chip comp-${r.component.split('_')[0]}`, text: COMPONENT_LABEL[r.component] || r.component })]),
+      el('td', {}, [el('span', { className: 'mono small', text: r.sku || '계약가' })]),
+      el('td', { className: 'num', text: fmtInt(r.qty) }),
+      el('td', { className: 'num', text: `$${num(r.price).toFixed(r.price < 1 ? 3 : 2)}` }),
+      el('td', { className: 'num' }, [el('b', { text: fmtUSD(r.cost) })]),
+    ])));
+    $('ledger-sku-sub').textContent = `${skuRows.length}개 라인 · 합계 ${fmtUSD(skuRows.reduce((a, r) => a + r.cost, 0))} = list_cost`;
+    const dims = d.range.group_by;
+    const head = clear($('ledger-facts-head'));
+    const cols = [['bucket_start', '버킷 (UTC)'], ...dims.map((x) => [x === 'user' ? 'email' : x, (LEDGER_DIMS.find(([k]) => k === x) || [x, x])[1]]),
+      ['requests', '요청'], ['total_tokens', '토큰'], ['list_cost', '정가 비용'], ['fact_id', 'fact_id']];
+    cols.forEach(([k, label]) => head.appendChild(el('th', { scope: 'col', className: ['requests', 'total_tokens', 'list_cost'].includes(k) ? 'num' : '', text: label })));
+    const fb = clear($('ledger-facts-tbody'));
+    const shown = facts.slice().sort((a, b) => b.bucket_start.localeCompare(a.bucket_start) || num(b.list_cost) - num(a.list_cost)).slice(0, 200);
+    if (!shown.length) fb.appendChild(el('tr', {}, [el('td', { colspan: String(cols.length), className: 'empty-cell', text: '데이터가 없습니다.' })]));
+    shown.forEach((f, i) => {
+      const tr = el('tr', { id: `ledger-fact-${f.fact_id}` }, cols.map(([k]) => {
+        if (k === 'bucket_start') return el('td', { className: 'mono small', text: d.range.granularity === 'hour' ? f.bucket_start.slice(0, 13).replace('T', ' ') + '시' : f.bucket_start.slice(0, 10) });
+        if (k === 'email') return el('td', { text: f.email ? maskEmail(f.email) : '미귀속' });
+        if (k === 'surface') return el('td', {}, [f.surface ? svcChip(f.surface) : el('span', { text: '—' })]);
+        if (k === 'requests') return el('td', { className: 'num', text: fmtInt(f.requests) });
+        if (k === 'total_tokens') return el('td', { className: 'num', text: fmtCompact(f.total_tokens) });
+        if (k === 'list_cost') return el('td', { className: 'num', text: f.list_cost === null ? (f.cost_basis === 'license' ? '라이선스' : '—') : fmtUSD(f.list_cost) });
+        if (k === 'fact_id') return el('td', { className: 'mono small muted', text: f.fact_id.slice(0, 12), title: `fact_id ${f.fact_id} · revision ${f.revision}` });
+        if (k === 'agent') return el('td', { className: 'mono small', text: (f.agent_names && f.agent_names[0]) || f.agent || '—' });
+        return el('td', { className: 'mono small', text: f[k] || '—' });
+      }));
+      tr.style.animationDelay = `${Math.min(i, 20) * 15}ms`;
+      fb.appendChild(tr);
+    });
+    $('ledger-facts-sub').textContent = `${fmtInt(facts.length)}행 중 최근 ${fmtInt(shown.length)}행 · fact_id로 upsert · revision이 바뀌면 재집계된 값`;
+    const ex = clear($('ledger-exports'));
+    const allExports = (d.exports || []).slice().reverse();
+    const exports = state.ledger.allExports ? allExports : allExports.slice(0, 7);
+    if (!exports.length) ex.appendChild(el('p', { className: 'muted', text: '이 기간의 내보내기 파일이 없습니다.' }));
+    exports.forEach((e) => ex.appendChild(el('div', { className: 'export-row', id: `ledger-export-${e.id}` }, [
+      el('span', { className: 'mono', text: e.id }),
+      el('span', { className: `chip ${e.status === 'complete' ? 'ok' : 'warn'}`, text: e.status === 'complete' ? '확정' : '진행 중' }),
+      el('span', { className: 'muted small', text: `${e.period_start.slice(0, 10)} · 시간 단위 · ${e.group_by.length}개 차원` }),
+      el('a', { className: 'btn btn-ghost btn-sm', href: `/api/ledger/export?id=${encodeURIComponent(e.id)}`, download: `${e.id}.jsonl`, text: 'JSONL 받기' }),
+    ])));
+    if (allExports.length > 7) {
+      ex.appendChild(el('button', { id: 'ledger-exports-more', className: 'btn btn-ghost btn-sm', type: 'button',
+        text: state.ledger.allExports ? '최근 7일만 보기' : `전체 ${allExports.length}일 보기`,
+        onClick: () => { state.ledger.allExports = !state.ledger.allExports; renderLedger(); } }));
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Cost explorer
   // ---------------------------------------------------------------------------
@@ -2489,6 +2694,9 @@
       });
     }
     $('cost-search').addEventListener('input', (e) => { state.costSearch = e.target.value; renderCosts(); });
+    for (const b of document.querySelectorAll('#ledger-gran .seg-btn')) b.addEventListener('click', () => { state.ledger.gran = b.dataset.gran; loadTab('ledger'); });
+    for (const b of document.querySelectorAll('#ledger-surface .seg-btn')) b.addEventListener('click', () => { state.ledger.surface = b.dataset.surface; loadTab('ledger'); });
+    for (const b of document.querySelectorAll('#ledger-bd-dim .seg-btn')) b.addEventListener('click', () => { state.ledger.bd = b.dataset.dim; renderLedger(); });
     $('cost-users-table').querySelector('thead').addEventListener('click', onCostSort);
     $('cost-models-table').querySelector('thead').addEventListener('click', onCostSort);
 

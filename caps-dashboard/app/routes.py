@@ -15,6 +15,7 @@ import http.server
 import json
 import logging
 import os
+import re
 import urllib.parse
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,10 @@ from .security import (
 LOG = logging.getLogger("caps_dashboard.routes")
 
 MAX_BODY_BYTES = 128 * 1024  # 128 KB JSON payload limit
+LEDGER_DIMENSIONS = ("user", "surface", "project", "model", "location", "client", "app", "agent", "traffic",
+                     "reasoning_level")
+LEDGER_SURFACES = ("antigravity", "gemini_platform", "gemini_enterprise")
+LEDGER_EXPORT_RE = re.compile(r"^usage-facts-hourly-\d{4}-\d{2}-\d{2}$")
 
 STATIC_ASSETS: dict[str, tuple[str, str]] = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -414,6 +419,10 @@ def make_handler(ctx: DashboardContext) -> type[http.server.BaseHTTPRequestHandl
                     self._handle_projects_overview()
                 elif path == "/api/audit":
                     self._handle_audit(qs)
+                elif path == "/api/ledger":
+                    self._handle_ledger(qs)
+                elif path == "/api/ledger/export":
+                    self._handle_ledger_export(qs)
                 elif path == "/api/_trace":
                     self._handle_trace(qs)
                 else:
@@ -726,6 +735,78 @@ def make_handler(ctx: DashboardContext) -> type[http.server.BaseHTTPRequestHandl
                     "partial_errors": errors,
                 },
             )
+
+        def _handle_ledger(self, qs: dict[str, str]) -> None:
+            """Usage ledger view: /v1/usage/facts (selected grain) + a daily dimension breakdown + export files."""
+            default_start, default_end = _default_date_range()
+            start = validate_date_str(qs.get("start"), "start") or default_start
+            end = validate_date_str(qs.get("end"), "end") or default_end
+            if start > end:
+                raise ValidationError("시작일은 종료일보다 이후일 수 없습니다.")
+            granularity = (qs.get("granularity") or "hour").strip().lower()
+            if granularity not in ("hour", "day"):
+                raise ValidationError("granularity는 hour 또는 day여야 합니다.")
+            span_days = (dt.date.fromisoformat(end) - dt.date.fromisoformat(start)).days + 1
+            if granularity == "hour" and span_days > 31:
+                raise ValidationError("시간 단위는 최대 31일까지 조회할 수 있습니다. 기간을 줄이거나 일 단위를 선택하세요.")
+            dims = [d.strip().lower() for d in (qs.get("group_by") or "user,surface,model").split(",") if d.strip()]
+            if not dims or any(d not in LEDGER_DIMENSIONS for d in dims):
+                raise ValidationError("group_by 차원이 올바르지 않습니다.")
+            surface = (qs.get("surface") or "all").strip().lower()
+            if surface != "all" and surface not in LEDGER_SURFACES:
+                raise ValidationError("surface 값이 올바르지 않습니다.")
+            project = validate_project(qs.get("project"), ctx.config.managed_projects, allow_all=True)
+            fresh = qs.get("fresh", "").lower() == "true"
+            base: dict[str, Any] = {"start": start, "end": end, "fresh": fresh}
+            if project:
+                base["project"] = project
+            if surface != "all":
+                base["surface"] = surface
+            results, errors = _parallel_fetch(
+                ctx.executor,
+                {
+                    "facts": lambda: ctx.client.list_facts(granularity=granularity, group_by=",".join(dims), **base),
+                    "dims": lambda: ctx.client.list_facts(
+                        granularity="day", group_by="surface,model,location,client,app,agent", **base),
+                    "exports": lambda: ctx.client.list_exports(after=start, before=(
+                        dt.date.fromisoformat(end) + dt.timedelta(days=1)).isoformat()),
+                },
+            )
+            facts = results.get("facts") or {}
+            breakdown = results.get("dims") or {}
+            self._send_json(
+                200,
+                {
+                    "range": {"start": start, "end": end, "project": project or "all", "surface": surface,
+                              "granularity": granularity, "group_by": dims},
+                    "facts": facts.get("data") or [],
+                    "summary": facts.get("summary") or {},
+                    "currency": facts.get("currency"),
+                    "pricing_source": facts.get("pricing_source") or {},
+                    "telemetry": facts.get("telemetry") or {},
+                    "data_refreshed_at": facts.get("data_refreshed_at"),
+                    "data_complete_through": facts.get("data_complete_through"),
+                    "breakdown": breakdown.get("data") or [],
+                    "exports": (results.get("exports") or {}).get("data") or [],
+                    "partial_errors": errors,
+                },
+            )
+
+        def _handle_ledger_export(self, qs: dict[str, str]) -> None:
+            export_id = (qs.get("id") or "").strip()
+            if not LEDGER_EXPORT_RE.match(export_id):
+                raise ValidationError("내보내기 ID 형식이 올바르지 않습니다.")
+            body, headers = ctx.client.download_export(export_id)
+            raw = body.encode("utf-8")
+            self.send_response(200)
+            self._send_headers_common(is_api=True)
+            self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="{export_id}.jsonl"')
+            self.send_header("Content-Length", str(len(raw)))
+            for k, v in headers.items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(raw)
 
         def _handle_trace(self, qs: dict[str, str]) -> None:
             """API Call Inspector feed: upstream Caps API calls made for this session only."""

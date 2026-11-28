@@ -818,3 +818,24 @@ html[data-theme="light"] dialog::backdrop { background: rgba(30, 41, 80, .25); }
   .inspector-cols, .insp-main { grid-template-columns: 96px 60px minmax(0, 1fr) 54px 120px 150px; gap: .6rem; }
   .inspector { left: calc(var(--sidebar-w) + .6rem); right: .6rem; }
 }
+
+/* ---- Usage ledger (v1.4.0) ---- */
+.nav-badge.new-badge { background: linear-gradient(135deg, #8b5cf6, #4f8cff); color: #fff; font-size: .62rem; letter-spacing: .04em; }
+.ledger-toolbar { flex-wrap: wrap; gap: .6rem; }
+.ledger-dims { display: flex; flex-wrap: wrap; gap: .35rem; }
+.dim-chip { border: 1px solid var(--line, rgba(148,163,184,.3)); background: transparent; color: var(--muted); border-radius: 999px;
+  padding: .28rem .7rem; font-size: .78rem; cursor: pointer; transition: all .15s ease; }
+.dim-chip:hover { color: var(--text, #e2e8f0); border-color: rgba(139,92,246,.6); }
+.dim-chip.on { background: rgba(139,92,246,.18); border-color: rgba(139,92,246,.75); color: var(--text, #e2e8f0); font-weight: 600; }
+.ledger-chart .chart { width: 100%; height: 230px; }
+.seg-sm .seg-btn { padding: .22rem .6rem; font-size: .75rem; }
+.ledger-exports { display: flex; flex-direction: column; gap: .5rem; }
+.export-row { display: grid; grid-template-columns: minmax(240px, 1fr) auto minmax(160px, 1fr) auto; gap: .8rem; align-items: center;
+  padding: .55rem .2rem; border-bottom: 1px dashed var(--line, rgba(148,163,184,.2)); }
+.export-row:last-child { border-bottom: 0; }
+.chip.ok { background: rgba(34,197,94,.15); color: #22c55e; }
+.chip.warn { background: rgba(245,158,11,.15); color: #f59e0b; }
+.chip.comp-audio { background: rgba(236,72,153,.15); color: #ec4899; }
+.chip.comp-image { background: rgba(14,165,233,.15); color: #0ea5e9; }
+.chip.comp-video { background: rgba(245,158,11,.15); color: #f59e0b; }
+.chart .c-bar.ledger-bar { fill: url(#ledgerBarGrad); }

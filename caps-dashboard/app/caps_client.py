@@ -306,6 +306,41 @@ class CapsApiClient:
     def pricing(self, model: str | None = None) -> dict[str, Any]:
         return self.request("GET", "/v1/pricing", params={"model": model} if model else None)
 
+    # --- Ledger-style collection (v1.4.0) -------------------------------------
+    def list_facts(self, **params: Any) -> dict[str, Any]:
+        return self.paginate_all("/v1/usage/facts", limit=1000, **params)
+
+    def list_exports(self, **params: Any) -> dict[str, Any]:
+        return self.request("GET", "/v1/usage/exports", params=params or None)
+
+    def download_export(self, export_id: str) -> tuple[str, dict[str, str]]:
+        """JSONL body + selected response headers of GET /v1/usage/exports/{id}/download (not JSON)."""
+        if not self._api_key:
+            raise CapsApiError(503, "configuration_error", "api_key_missing",
+                               "CAPS_API_KEY is not configured on the dashboard server.")
+        path = f"/v1/usage/exports/{self._quote(export_id)}/download"
+        url = self.base_url + path
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {self._api_key}", "Accept": "application/x-ndjson",
+            "User-Agent": "gcp-ai-usage-caps-dashboard/1.0"}, method="GET")
+        started = time.monotonic()
+        try:
+            with urllib.request.urlopen(req, timeout=max(self.timeout, 120),
+                                        context=self._ssl_ctx if url.startswith("https://") else None) as resp:
+                body = resp.read().decode("utf-8")
+                headers = {k: v for k, v in resp.headers.items()
+                           if k.lower().startswith("x-usage-export") or k.lower() == "x-data-refreshed-at"}
+                self._trace(method="GET", path_qs=path, body=None, status=resp.status, started=started,
+                            response={"lines": body.count("\n"), **headers}, attempts=1)
+                return body, headers
+        except urllib.error.HTTPError as err:
+            self._trace(method="GET", path_qs=path, body=None, status=err.code, started=started,
+                        error_code=f"http_{err.code}", attempts=1)
+            raise CapsApiError(err.code, "api_error", f"http_{err.code}", "Export download failed.") from err
+        except urllib.error.URLError as err:
+            raise CapsApiError(502, "upstream_error", "upstream_unreachable",
+                               "Could not reach gcp-ai-usage-caps-api.") from err
+
     # --- Spend Caps & Policy --------------------------------------------------
     def get_cap_policy(self) -> dict[str, Any]:
         return self.request("GET", "/v1/caps/policy")
